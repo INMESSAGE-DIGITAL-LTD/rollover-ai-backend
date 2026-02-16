@@ -4,6 +4,8 @@ Flask API for AI Football Predictions
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from models.multi_market_predictor import MultiMarketPredictor
+from utils.team_stats import TeamStatsCalculator
+from utils.fixture_fetcher import fetch_todays_fixtures, build_daily_slip
 import os
 
 app = Flask(__name__)
@@ -14,6 +16,11 @@ print("🔄 Loading trained models...")
 predictor = MultiMarketPredictor()
 predictor.load_models('models/trained')
 print("✅ Models loaded!")
+
+# Load team stats from historical data
+print("🔄 Loading team statistics...")
+stats_calculator = TeamStatsCalculator('data/raw/all_matches.csv')
+print("✅ Team stats ready!")
 
 @app.route('/')
 def home():
@@ -141,6 +148,72 @@ def test_prediction():
         }
     
     return jsonify(result)
+
+@app.route('/api/today', methods=['GET'])
+def today_predictions():
+    """
+    Fetch today's real fixtures, run AI predictions, and return a smart slip.
+    
+    GET /api/today
+    Optional query params:
+        max_matches: int (1-4, default 4)
+        max_odds: float (default 2.10)
+    
+    Returns:
+        - Daily slip (1-4 best matches, combined odds <= 2.10)
+        - All analyzed fixtures with AI probabilities
+    """
+    try:
+        max_matches = int(request.args.get('max_matches', 4))
+        max_odds = float(request.args.get('max_odds', 2.10))
+        
+        max_matches = min(max(max_matches, 1), 4)
+        max_odds = min(max(max_odds, 1.5), 3.0)
+        
+        print(f"🔄 Fetching today's fixtures...")
+        fixtures = fetch_todays_fixtures()
+        
+        if not fixtures:
+            return jsonify({
+                'date': __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d'),
+                'total_fixtures_analyzed': 0,
+                'slip': {
+                    'matches': [],
+                    'match_count': 0,
+                    'combined_odds': 0,
+                    'slip_confidence': 'NONE',
+                },
+                'all_predictions': [],
+                'message': 'No fixtures available right now. Try again later.',
+            })
+        
+        print(f"🧠 Running AI predictions on {len(fixtures)} fixtures...")
+        result = build_daily_slip(
+            fixtures, predictor, stats_calculator,
+            max_matches=max_matches,
+            max_odds=max_odds,
+        )
+        
+        result['ai_model'] = {
+            'version': '1.0.0',
+            'markets_analyzed': 14,
+            'teams_in_database': len(stats_calculator.get_all_teams()),
+        }
+        
+        print(f"✅ Slip ready: {result['slip']['match_count']} matches, "
+              f"odds {result['slip']['combined_odds']}")
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"❌ Error in /api/today: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/teams', methods=['GET'])
+def list_teams():
+    """List all teams in the database"""
+    teams = stats_calculator.get_all_teams()
+    return jsonify({'teams': teams, 'count': len(teams)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))

@@ -8,7 +8,5 @@ venv/
 .env
 *.log
 .DS_Store
-data/raw/
-*.csv
 .vscode/
 .idea/
