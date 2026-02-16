@@ -267,3 +267,4 @@ class PredictionService {
 ---
 
 Ready to train the models! 🚀
+# v2.1 - Mixed Markets
