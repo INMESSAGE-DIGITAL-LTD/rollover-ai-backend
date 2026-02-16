@@ -1,6 +1,6 @@
-# Production dependencies - lightweight for serving predictions only
-xgboost==2.0.3
-flask==3.0.0
-flask-cors==4.0.0
-gunicorn==21.2.0
-numpy==1.26.2
+# Minimal production dependencies
+xgboost>=2.0.0,<3.0.0
+Flask>=3.0.0,<4.0.0
+Flask-Cors>=4.0.0,<5.0.0
+gunicorn>=21.0.0,<22.0.0
+numpy>=1.24.0,<2.0.0
