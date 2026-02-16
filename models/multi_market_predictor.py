@@ -76,39 +76,32 @@ class MultiMarketPredictor:
     
     def predict_match(self, match_features):
         """
-        Predict all 14 markets for a single match
-        
-        Args:
-            match_features: dict with feature values
-        
-        Returns:
-            dict: {market: probability}
+        Predict all 14 markets for a single match using native Booster API (no sklearn needed)
         """
         import numpy as np
         
-        # Convert dict to 2D array for prediction
+        feature_order = [
+            'home_goals_per_game', 'home_goals_conceded_per_game',
+            'home_over15_rate', 'home_over05_rate', 'home_first_half_goals',
+            'away_goals_per_game', 'away_goals_conceded_per_game',
+            'away_over15_rate', 'away_over05_rate', 'away_first_half_goals',
+            'home_home_goals', 'home_home_conceded',
+            'away_away_goals', 'away_away_conceded',
+            'total_expected_goals', 'defensive_strength',
+            'over15_odds', 'under15_odds'
+        ]
+        
         if isinstance(match_features, dict):
-            # Create array with features in correct order
-            feature_order = [
-                'home_goals_per_game', 'home_goals_conceded_per_game',
-                'home_over15_rate', 'home_over05_rate', 'home_first_half_goals',
-                'away_goals_per_game', 'away_goals_conceded_per_game',
-                'away_over15_rate', 'away_over05_rate', 'away_first_half_goals',
-                'home_home_goals', 'home_home_conceded',
-                'away_away_goals', 'away_away_conceded',
-                'total_expected_goals', 'defensive_strength',
-                'over15_odds', 'under15_odds'
-            ]
-            match_array = np.array([[match_features[f] for f in feature_order]])
+            match_array = np.array([[match_features[f] for f in feature_order]], dtype=np.float32)
         else:
-            match_array = match_features
+            match_array = np.array(match_features, dtype=np.float32)
+        
+        dmatrix = xgb.DMatrix(match_array, feature_names=feature_order)
         
         predictions = {}
-        
         for market, model in self.models.items():
-            # Get probability of class 1 (YES)
-            prob = model.predict_proba(match_array)[0][1]
-            predictions[market] = round(prob, 3)
+            prob = model.predict(dmatrix)[0]
+            predictions[market] = round(float(prob), 3)
         
         return predictions
     
@@ -122,10 +115,10 @@ class MultiMarketPredictor:
             print(f"✅ Saved {market}")
     
     def load_models(self, directory='models/trained'):
-        """Load all models from disk"""
+        """Load all models from disk using native Booster (no sklearn needed)"""
         for market in self.markets:
             filepath = f"{directory}/{market}_model.json"
-            model = xgb.XGBClassifier()
+            model = xgb.Booster()
             model.load_model(filepath)
             self.models[market] = model
             print(f"✅ Loaded {market}")
