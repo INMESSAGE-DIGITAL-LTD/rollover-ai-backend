@@ -79,22 +79,35 @@ class MultiMarketPredictor:
         Predict all 14 markets for a single match
         
         Args:
-            match_features: dict or DataFrame with feature values
+            match_features: dict with feature values
         
         Returns:
             dict: {market: probability}
         """
-        import pandas as pd
+        import numpy as np
         
-        # Convert to DataFrame if dict
+        # Convert dict to 2D array for prediction
         if isinstance(match_features, dict):
-            match_features = pd.DataFrame([match_features])
+            # Create array with features in correct order
+            feature_order = [
+                'home_goals_per_game', 'home_goals_conceded_per_game',
+                'home_over15_rate', 'home_over05_rate', 'home_first_half_goals',
+                'away_goals_per_game', 'away_goals_conceded_per_game',
+                'away_over15_rate', 'away_over05_rate', 'away_first_half_goals',
+                'home_home_goals', 'home_home_conceded',
+                'away_away_goals', 'away_away_conceded',
+                'total_expected_goals', 'defensive_strength',
+                'over15_odds', 'under15_odds'
+            ]
+            match_array = np.array([[match_features[f] for f in feature_order]])
+        else:
+            match_array = match_features
         
         predictions = {}
         
         for market, model in self.models.items():
             # Get probability of class 1 (YES)
-            prob = model.predict_proba(match_features)[0][1]
+            prob = model.predict_proba(match_array)[0][1]
             predictions[market] = round(prob, 3)
         
         return predictions
