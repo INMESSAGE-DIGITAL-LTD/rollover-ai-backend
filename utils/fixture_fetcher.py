@@ -9,7 +9,7 @@ import urllib.error
 from datetime import datetime
 
 
-ODDS_API_KEY = os.environ.get('ODDS_API_KEY', 'a3897783adea6774d79a4c5f1eff884c')
+ODDS_API_KEY = os.environ.get('ODDS_API_KEY', '9b60df413e4787402cbcce033ab78277')
 ODDS_API_BASE = 'https://api.the-odds-api.com/v4'
 
 LEAGUES = [
