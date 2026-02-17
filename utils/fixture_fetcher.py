@@ -594,11 +594,16 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
 
     best_slip = None
     best_score = -1
+    best_count = 0
 
     # Try 4-match first (preferred), then 3, then 2
     for target_count in [4, 3, 2]:
         if num_fixtures < target_count:
             continue
+
+        # If we already have a combo with more matches, skip smaller combos
+        if best_slip and best_count > target_count:
+            break
 
         from itertools import combinations as combs
         for fixture_combo in combs(range(num_fixtures), target_count):
@@ -621,14 +626,12 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                 elif 1.80 <= combined < 1.90:
                     ideal_bonus = 0.95
 
-                # Prefer more matches (safer spread)
-                match_bonus = 1.0 + (target_count - 2) * 0.08  # 4-match=1.16, 3-match=1.08, 2-match=1.0
-
-                score = avg_composite * ideal_bonus * match_bonus
+                score = avg_composite * ideal_bonus
 
                 if score > best_score:
                     best_score = score
                     best_slip = list(market_combo)
+                    best_count = target_count
 
     if not best_slip:
         # Fallback: any 2 picks (even same match, different markets) hitting 1.80+
