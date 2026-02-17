@@ -445,11 +445,11 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         # === Double Chance ===
         dc = markets.get('double_chance', {})
         if 'home_draw' in dc:
-            _try_add('Home or Draw', dc['home_draw'], AI_MARKET_MAP['double_chance_home_draw'])
+            _try_add('Double Chance (1X)', dc['home_draw'], AI_MARKET_MAP['double_chance_home_draw'])
         if 'away_draw' in dc:
-            _try_add('Draw or Away', dc['away_draw'], AI_MARKET_MAP['double_chance_away_draw'])
+            _try_add('Double Chance (X2)', dc['away_draw'], AI_MARKET_MAP['double_chance_away_draw'])
         if 'home_away' in dc:
-            _try_add('Home or Away', dc['home_away'], AI_MARKET_MAP['double_chance_home_away'])
+            _try_add('Double Chance (12)', dc['home_away'], AI_MARKET_MAP['double_chance_home_away'])
 
         # === Team Goals ===
         hts = markets.get('home_to_score', {})
