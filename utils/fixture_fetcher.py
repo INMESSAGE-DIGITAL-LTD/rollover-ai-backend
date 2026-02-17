@@ -595,14 +595,13 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
     best_slip = None
     best_score = -1
 
-    # Try all combinations of fixtures, with top market options per fixture
-    for target_count in [3, 4, 2]:
+    # Try 4-match first (preferred), then 3, then 2
+    for target_count in [4, 3, 2]:
         if num_fixtures < target_count:
             continue
 
         from itertools import combinations as combs
         for fixture_combo in combs(range(num_fixtures), target_count):
-            # For each fixture in combo, try its top market options
             option_lists = [fixture_options[fixture_keys[i]] for i in fixture_combo]
             for market_combo in product(*option_lists):
                 combined = 1.0
@@ -613,15 +612,19 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                     continue
 
                 avg_composite = sum(p.get('composite_score', 0) for p in market_combo) / len(market_combo)
+                # Prefer ideal odds range
                 ideal_bonus = 1.0
                 if 2.00 <= combined <= 2.30:
                     ideal_bonus = 1.20
                 elif 1.90 <= combined <= 2.40:
                     ideal_bonus = 1.10
                 elif 1.80 <= combined < 1.90:
-                    ideal_bonus = 0.95  # Slightly penalize below 1.90
+                    ideal_bonus = 0.95
 
-                score = avg_composite * ideal_bonus
+                # Prefer more matches (safer spread)
+                match_bonus = 1.0 + (target_count - 2) * 0.08  # 4-match=1.16, 3-match=1.08, 2-match=1.0
+
+                score = avg_composite * ideal_bonus * match_bonus
 
                 if score > best_score:
                     best_score = score
