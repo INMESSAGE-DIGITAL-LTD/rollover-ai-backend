@@ -68,8 +68,15 @@ def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h):
 
     edge = adjusted_prob - implied_prob
 
-    # Edge gate: 5% with stats, 3% without (relaxed fallback)
-    min_edge = 0.05 if has_stats else 0.03
+    # Edge gate: relaxed thresholds per market safety level
+    lab = market_label.lower()
+    if 'double chance' in lab or 'or' in lab or 'home or' in lab or 'draw or' in lab:
+        min_edge = 0.02 if has_stats else 0.01  # DC is inherently safe
+    elif 'over 0.5' in lab:
+        min_edge = 0.02 if has_stats else 0.01  # Very high base rate
+    else:
+        min_edge = 0.03 if has_stats else 0.02  # Standard markets
+
     if edge < min_edge:
         return None
 
@@ -90,9 +97,9 @@ def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h):
 
 def confidence_label(edge):
     """Convert edge to confidence label."""
-    if edge >= 0.12:
+    if edge >= 0.08:
         return 'HIGH'
-    if edge >= 0.07:
+    if edge >= 0.04:
         return 'MEDIUM'
     return 'LOW'
 
@@ -154,7 +161,9 @@ def _qualify_over25(ai_prob, implied, home, away, h2h):
             passed += 1
 
     if passed < checks:
-        return implied * 0.96
+        # Don't completely reject — reduce probability instead of killing it
+        penalty = max(0.92, 1.0 - (checks - passed) * 0.03)
+        return implied * penalty
 
     # Weighted: stats + AI model
     stats_prob = min(0.92, avg_o25 * 0.25 + combined / 5.0 * 0.20 + 0.15)
@@ -192,7 +201,8 @@ def _qualify_over15(ai_prob, implied, home, away, h2h):
             passed += 1
 
     if passed < checks:
-        return implied * 0.96
+        penalty = max(0.93, 1.0 - (checks - passed) * 0.03)
+        return implied * penalty
 
     stats_prob = min(0.93, avg_o15 * 0.30 + combined / 4.0 * 0.20 + 0.15)
     return min(0.93, stats_prob * 0.5 + ai_prob * 0.5)
@@ -317,15 +327,19 @@ def _qualify_double_chance(label, ai_prob, implied, home, away):
 
     lab = label.lower()
     if 'home or draw' in lab:
-        if home['home_win_rate'] < 0.40:
-            return implied * 0.96
-        return min(0.93, home['home_win_rate'] * 0.35 + implied * 0.30 + ai_prob * 0.25 + 0.10)
+        if home['home_win_rate'] < 0.30:
+            return implied * 0.97
+        return min(0.95, home['home_win_rate'] * 0.30 + (1.0 - away['away_loss_rate']) * 0.15 + implied * 0.25 + ai_prob * 0.20 + 0.10)
     elif 'draw or away' in lab:
-        if away['away_loss_rate'] > 0.70:
-            return implied * 0.96
-        return min(0.93, (1.0 - away['away_loss_rate']) * 0.30 + implied * 0.30 + ai_prob * 0.25 + 0.10)
+        if away['away_loss_rate'] > 0.80:
+            return implied * 0.97
+        return min(0.95, (1.0 - away['away_loss_rate']) * 0.25 + implied * 0.30 + ai_prob * 0.25 + 0.10)
     else:
-        return min(0.94, implied + 0.06)
+        # Home or Away (12) — very safe, only draw loses
+        draw_unlikely = (home['home_win_rate'] >= 0.40 or away['away_loss_rate'] >= 0.40)
+        if draw_unlikely:
+            return min(0.96, implied + 0.06)
+        return min(0.94, implied + 0.04)
 
 
 # ═══════════════════════════════════════════════════════════

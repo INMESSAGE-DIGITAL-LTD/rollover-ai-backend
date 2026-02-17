@@ -566,12 +566,30 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                 best_slip = list(combo)
 
     if not best_slip:
-        # Fallback: just take top 2 picks if odds work
+        # Fallback: just take top 2 picks if odds work (even from same match)
         if len(candidates) >= 2:
             top2 = candidates[:2]
             combined = top2[0]['odds'] * top2[1]['odds']
             if 1.50 <= combined <= max_odds:
                 best_slip = top2
+        # Try mixing different markets from same match if still low
+        if not best_slip and len(match_options) >= 2:
+            # Allow same match, different markets
+            used_combos = set()
+            for i, a in enumerate(match_options[:8]):
+                for j, b in enumerate(match_options[:8]):
+                    if i >= j:
+                        continue
+                    combo_key = f"{a['market']}_{b['market']}"
+                    if combo_key in used_combos:
+                        continue
+                    used_combos.add(combo_key)
+                    combined = a['odds'] * b['odds']
+                    if 1.80 <= combined <= max_odds:
+                        best_slip = [a, b]
+                        break
+                if best_slip:
+                    break
         # Last resort: single strongest pick
         if not best_slip and candidates:
             best_slip = [candidates[0]]
