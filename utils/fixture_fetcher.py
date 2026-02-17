@@ -15,58 +15,54 @@ SPORTMONKS_TOKEN = os.environ.get(
 )
 SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
-# Top league IDs — expanded for maximum daily coverage
+# League IDs — ONLY leagues available in the SportMonks plan
 LEAGUE_IDS = {
-    # Top 5 European Leagues
+    # England
     8: 'Premier League',
-    564: 'La Liga',
-    82: 'Bundesliga',
-    384: 'Serie A',
-    301: 'Ligue 1',
-    # Second-tier European Leagues
     9: 'Championship',
+    24: 'FA Cup',
+    27: 'Carabao Cup',
+    # Netherlands
     72: 'Eredivisie',
-    462: 'Liga Portugal',
-    600: 'Super Lig',
-    271: 'Scottish Premiership',
-    208: 'Belgian Pro League',
-    501: 'Scottish Championship',
-    325: 'Bundesliga 2',
+    # Germany
+    82: 'Bundesliga',
+    # Austria
+    181: 'Austrian Bundesliga',
+    # Belgium
+    208: 'Pro League',
+    # Croatia
+    244: '1. HNL',
+    # Denmark
+    271: 'Superliga',
+    # France
+    301: 'Ligue 1',
+    # Italy
+    384: 'Serie A',
     387: 'Serie B',
-    648: 'Ligue 2',
-    # Americas
-    27: 'Liga MX',
-    242: 'MLS',
-    513: 'Super Liga Argentina',
-    # Asia / Middle East / Oceania
-    609: 'Saudi Pro League',
-    185: 'A-League',
-    244: 'J-League',
-    # More European
-    307: 'Swiss Super League',
-    99: 'Ekstraklasa',
-    570: 'Austrian Bundesliga',
-    636: 'Danish Superliga',
-    # Additional leagues for low-fixture days
-    602: 'Greek Super League',
-    390: 'Czech First League',
+    390: 'Coppa Italia',
+    # Norway
+    444: 'Eliteserien',
+    # Poland
+    453: 'Ekstraklasa',
+    # Portugal
     462: 'Liga Portugal',
-    392: 'Romanian Liga I',
-    326: 'Championship',       # English League One
-    583: 'Norwegian Eliteserien',
-    573: 'Swedish Allsvenskan',
-    281: 'Ukrainian Premier League',
-    218: 'Croatian HNL',
-    409: 'Serbian SuperLiga',
-    262: 'Brazilian Serie A',
-    729: 'K-League 1',
-    169: 'Chinese Super League',
-    188: 'Indian Super League',
-    1007: 'Copa Libertadores',
+    # Other
+    486: 'Premier League (Other)',
+    # Scotland
+    501: 'Premiership',
+    # Spain
+    564: 'La Liga',
+    567: 'La Liga 2',
+    570: 'Copa Del Rey',
+    # Sweden
+    573: 'Allsvenskan',
+    # Greece
+    591: 'Super League',
+    # Turkey
+    600: 'Super Lig',
 }
 
-# Cup competitions to reject (rotation risk)
-CUP_LEAGUE_IDS = {2, 5, 7, 683, 15, 16}
+# No cup rejection — cups in our plan are safe to use
 LEAGUE_FILTER = ','.join(str(lid) for lid in LEAGUE_IDS)
 
 # Map bookmaker lines to our AI markets
@@ -128,6 +124,9 @@ def fetch_todays_fixtures():
         all_fixtures.extend(fixtures_day_after)
 
     print(f"✅ Fetched {len(all_fixtures)} fixtures total across {len(set(f['commence_time'][:10] for f in all_fixtures)) if all_fixtures else 0} day(s)")
+
+    # Sort by kickoff time — first come, first served
+    all_fixtures.sort(key=lambda f: f.get('commence_time', ''))
     return all_fixtures
 
 
@@ -485,10 +484,17 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
         # === Over/Under lines ===
         for point, line_data in fix['lines'].items():
+            # Over market
             odds = line_data['over_odds']
             ai_market = LINE_TO_AI_MARKET.get(point, 'ft_over_15')
             label = LINE_LABELS.get(point, f'Over {point} Goals')
             _try_add(label, odds, ai_market, line=point)
+
+            # Under market (3.5 and 4.5 are safe low-odds picks)
+            under_odds = line_data.get('under_odds', 0)
+            if under_odds > 0 and point >= 3.5:
+                under_label = f'Under {point} Goals'
+                _try_add(under_label, under_odds, ai_market, line=point)
 
         # === BTTS Yes ===
         btts_m = markets.get('btts', {})

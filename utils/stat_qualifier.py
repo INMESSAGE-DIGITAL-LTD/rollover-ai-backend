@@ -12,31 +12,34 @@ import math
 
 # ═══════════════════════════════════════════════════════════
 # Per-Market Safety Rules: (min_odds, sweet_max, absolute_max)
-# No single pick exceeds 1.57
+# Single pick max 1.60 (relaxed from 1.57 for more options)
 # ═══════════════════════════════════════════════════════════
 SAFETY_RULES = {
-    'Over 2.5 Goals':   (1.20, 1.45, 1.50),
-    'Over 1.5 Goals':   (1.15, 1.40, 1.50),
-    'Over 0.5 Goals':   (1.05, 1.20, 1.25),
-    'Home Win':         (1.15, 1.45, 1.57),
-    'Away Win':         (1.15, 1.45, 1.57),
-    'Both Teams to Score': (1.30, 1.45, 1.50),
-    'Double Chance (1X)': (1.10, 1.40, 1.45),
-    'Double Chance (X2)': (1.10, 1.40, 1.45),
-    'Double Chance (12)': (1.05, 1.25, 1.30),
-    'Home or Draw':     (1.10, 1.40, 1.45),
-    'Draw or Away':     (1.10, 1.40, 1.45),
-    'Home or Away':     (1.05, 1.25, 1.30),
-    'Home to Score':    (1.10, 1.35, 1.40),
-    'Away to Score':    (1.15, 1.45, 1.50),
-    'Home Over 0.5 Goals': (1.10, 1.35, 1.40),
-    'Away Over 0.5 Goals': (1.15, 1.45, 1.50),
-    '1st Half Over 0.5': (1.20, 1.50, 1.57),
-    '2nd Half Over 0.5': (1.20, 1.50, 1.57),
+    'Over 2.5 Goals':       (1.20, 1.50, 1.60),
+    'Over 1.5 Goals':       (1.10, 1.45, 1.57),
+    'Over 0.5 Goals':       (1.01, 1.20, 1.25),
+    'Over 3.5 Goals':       (1.50, 1.60, 1.60),
+    'Under 4.5 Goals':      (1.10, 1.40, 1.57),
+    'Under 3.5 Goals':      (1.20, 1.55, 1.60),
+    'Home Win':             (1.15, 1.50, 1.60),
+    'Away Win':             (1.15, 1.50, 1.60),
+    'Both Teams to Score':  (1.25, 1.50, 1.57),
+    'Double Chance (1X)':   (1.05, 1.45, 1.50),
+    'Double Chance (X2)':   (1.05, 1.45, 1.50),
+    'Double Chance (12)':   (1.01, 1.30, 1.40),
+    'Home or Draw':         (1.05, 1.45, 1.50),
+    'Draw or Away':         (1.05, 1.45, 1.50),
+    'Home or Away':         (1.01, 1.30, 1.40),
+    'Home to Score':        (1.05, 1.40, 1.50),
+    'Away to Score':        (1.10, 1.50, 1.57),
+    'Home Over 0.5 Goals':  (1.05, 1.40, 1.50),
+    'Away Over 0.5 Goals':  (1.10, 1.50, 1.57),
+    '1st Half Over 0.5':    (1.15, 1.55, 1.60),
+    '2nd Half Over 0.5':    (1.15, 1.55, 1.60),
 }
 
 # Default rule for markets not listed above
-DEFAULT_RULE = (1.10, 1.50, 1.57)
+DEFAULT_RULE = (1.10, 1.55, 1.60)
 
 
 def passes_odds_safety(market_label, odds):
@@ -129,6 +132,8 @@ def _qualify_by_market(label, ai_prob, implied_prob, home, away, h2h):
         return _qualify_home_win(ai_prob, implied_prob, home, away, h2h)
     elif lab == 'away win':
         return _qualify_away_win(ai_prob, implied_prob, home, away, h2h)
+    elif 'under 4.5' in lab or 'under 3.5' in lab:
+        return _qualify_under(ai_prob, implied_prob, home, away)
     elif 'both teams' in lab:
         return _qualify_btts(ai_prob, implied_prob, home, away, h2h)
     elif 'double chance' in lab or 'home or draw' in lab or 'draw or away' in lab or 'home or away' in lab:
@@ -193,6 +198,22 @@ def _qualify_team_goals(ai_prob, implied, home, away):
     score_rate = max(home['scored_in_rate'], away['scored_in_rate'])
     blended = ai_prob * 0.55 + score_rate * 0.25 + implied * 0.20
     return min(0.93, max(blended, implied + 0.02))
+
+
+def _qualify_under(ai_prob, implied, home, away):
+    """Under 3.5/4.5 — safe when teams don't score heavily."""
+    if home is None or away is None:
+        return max(ai_prob, implied + 0.03)
+
+    combined = home['avg_goals_scored'] + away['avg_goals_scored']
+    # Under 4.5 is very likely if combined avg < 3.5
+    # Under 3.5 is likely if combined avg < 2.8
+    defense_factor = 1.0 - min(1.0, combined / 5.0)
+    clean_factor = (home.get('clean_sheet_rate', 0.3) + away.get('clean_sheet_rate', 0.3)) / 2.0
+
+    stats_prob = defense_factor * 0.40 + clean_factor * 0.20 + 0.30
+    blended = ai_prob * 0.45 + stats_prob * 0.30 + implied * 0.25
+    return min(0.95, max(blended, implied + 0.02))
 
 
 def _qualify_home_win(ai_prob, implied, home, away, h2h):
