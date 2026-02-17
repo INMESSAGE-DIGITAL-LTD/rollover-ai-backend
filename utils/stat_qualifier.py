@@ -31,8 +31,8 @@ SAFETY_RULES = {
     'Away to Score':    (1.15, 1.45, 1.50),
     'Home Over 0.5 Goals': (1.10, 1.35, 1.40),
     'Away Over 0.5 Goals': (1.15, 1.45, 1.50),
-    '1H Over 0.5':      (1.20, 1.50, 1.57),
-    '2H Over 0.5':      (1.20, 1.50, 1.57),
+    '1st Half Over 0.5': (1.20, 1.50, 1.57),
+    '2nd Half Over 0.5': (1.20, 1.50, 1.57),
 }
 
 # Default rule for markets not listed above
@@ -121,7 +121,7 @@ def _qualify_by_market(label, ai_prob, implied_prob, home, away, h2h):
         return _qualify_over25(ai_prob, implied_prob, home, away, h2h)
     elif 'over 1.5' in lab:
         return _qualify_over15(ai_prob, implied_prob, home, away, h2h)
-    elif 'over 0.5' in lab and ('home' in lab or 'away' in lab or '1h' in lab or '2h' in lab):
+    elif 'over 0.5' in lab and ('home' in lab or 'away' in lab or 'half' in lab):
         return _qualify_team_goals(ai_prob, implied_prob, home, away)
     elif 'over 0.5' in lab:
         return _qualify_over05(ai_prob, implied_prob, home, away)

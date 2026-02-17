@@ -462,10 +462,10 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         # === Half Goals ===
         fhg = markets.get('first_half_goals', {})
         if 0.5 in fhg and 'over' in fhg[0.5]:
-            _try_add('1H Over 0.5', fhg[0.5]['over'], AI_MARKET_MAP['fh_over_05'])
+            _try_add('1st Half Over 0.5', fhg[0.5]['over'], AI_MARKET_MAP['fh_over_05'])
         shg = markets.get('second_half_goals', {})
         if 0.5 in shg and 'over' in shg[0.5]:
-            _try_add('2H Over 0.5', shg[0.5]['over'], AI_MARKET_MAP['sh_over_05'])
+            _try_add('2nd Half Over 0.5', shg[0.5]['over'], AI_MARKET_MAP['sh_over_05'])
 
         # === Home/Away Goals Over 0.5 ===
         hg = markets.get('home_goals', {})
