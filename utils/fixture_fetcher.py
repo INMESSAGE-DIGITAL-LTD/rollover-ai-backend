@@ -98,36 +98,16 @@ AI_MARKET_MAP = {
 
 
 def fetch_todays_fixtures():
-    """Fetch today's fixtures with over/under odds from SportMonks API.
-    If today has fewer than 4 fixtures, also fetches tomorrow's."""
-    today = datetime.now(timezone.utc)
-    dates_to_fetch = [today.strftime('%Y-%m-%d')]
+    """Fetch today's fixtures with over/under odds from SportMonks API."""
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
 
-    all_fixtures = []
+    fixtures = _fetch_fixtures_for_date(today)
 
-    # Fetch today first
-    fixtures_today = _fetch_fixtures_for_date(dates_to_fetch[0])
-    all_fixtures.extend(fixtures_today)
+    # Sort by kickoff time
+    fixtures.sort(key=lambda f: f.get('commence_time', ''))
 
-    # If < 4 fixtures, also fetch tomorrow
-    if len(all_fixtures) < 4:
-        tomorrow = (today + timedelta(days=1)).strftime('%Y-%m-%d')
-        print(f"📅 Only {len(all_fixtures)} fixtures today, also fetching {tomorrow}")
-        fixtures_tomorrow = _fetch_fixtures_for_date(tomorrow)
-        all_fixtures.extend(fixtures_tomorrow)
-
-    # If still < 4, fetch day after tomorrow
-    if len(all_fixtures) < 4:
-        day_after = (today + timedelta(days=2)).strftime('%Y-%m-%d')
-        print(f"📅 Still only {len(all_fixtures)} fixtures, also fetching {day_after}")
-        fixtures_day_after = _fetch_fixtures_for_date(day_after)
-        all_fixtures.extend(fixtures_day_after)
-
-    print(f"✅ Fetched {len(all_fixtures)} fixtures total across {len(set(f['commence_time'][:10] for f in all_fixtures)) if all_fixtures else 0} day(s)")
-
-    # Sort by kickoff time — first come, first served
-    all_fixtures.sort(key=lambda f: f.get('commence_time', ''))
-    return all_fixtures
+    print(f"✅ Fetched {len(fixtures)} fixtures for {today}")
+    return fixtures
 
 
 def _fetch_fixtures_for_date(date_str):
@@ -619,18 +599,20 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                 for pick in market_combo:
                     combined *= pick['odds']
 
-                if combined < 1.80 or combined > max_odds:
+                if combined < 1.50 or combined > max_odds:
                     continue
 
                 avg_composite = sum(p.get('composite_score', 0) for p in market_combo) / len(market_combo)
                 # Prefer ideal odds range
                 ideal_bonus = 1.0
                 if 2.00 <= combined <= 2.30:
-                    ideal_bonus = 1.20
+                    ideal_bonus = 1.25
                 elif 1.90 <= combined <= 2.40:
-                    ideal_bonus = 1.10
+                    ideal_bonus = 1.15
                 elif 1.80 <= combined < 1.90:
-                    ideal_bonus = 0.95
+                    ideal_bonus = 1.05
+                elif 1.50 <= combined < 1.80:
+                    ideal_bonus = 0.90  # Acceptable but not ideal
 
                 score = avg_composite * ideal_bonus
 
@@ -640,13 +622,13 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                     best_count = target_count
 
     if not best_slip:
-        # Fallback: any 2 picks (even same match, different markets) hitting 1.80+
+        # Fallback: any 2 picks hitting 1.50+
         for i, a in enumerate(match_options[:10]):
             for j, b in enumerate(match_options[:10]):
                 if i >= j:
                     continue
                 combined = a['odds'] * b['odds']
-                if 1.80 <= combined <= max_odds:
+                if 1.50 <= combined <= max_odds:
                     best_slip = [a, b]
                     break
             if best_slip:
