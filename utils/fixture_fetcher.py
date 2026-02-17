@@ -1,24 +1,29 @@
 """
-Fetch today's fixtures from The Odds API and generate AI predictions + slip
+Fetch today's fixtures from SportMonks API and generate AI predictions + slip
 Supports mixed markets: Over 0.5, 1.5, 2.5, 3.5 goals
 """
 import os
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime
+from datetime import datetime, timezone
 
 
-ODDS_API_KEY = os.environ.get('ODDS_API_KEY', '9b60df413e4787402cbcce033ab78277')
-ODDS_API_BASE = 'https://api.the-odds-api.com/v4'
+SPORTMONKS_TOKEN = os.environ.get(
+    'SPORTMONKS_TOKEN',
+    'b7EFSY6Bmrxisf6OswWjYArQUHMakSEDRMTJVoFiH56sbHsxaJxFRpVrOuoL',
+)
+SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
-LEAGUES = [
-    'soccer_epl',
-    'soccer_spain_la_liga',
-    'soccer_germany_bundesliga',
-    'soccer_italy_serie_a',
-    'soccer_france_ligue_one',
-]
+# Top-5 league IDs
+LEAGUE_IDS = {
+    8: 'Premier League',
+    564: 'La Liga',
+    82: 'Bundesliga',
+    384: 'Serie A',
+    301: 'Ligue 1',
+}
+LEAGUE_FILTER = ','.join(str(lid) for lid in LEAGUE_IDS)
 
 # Map bookmaker lines to our AI markets
 LINE_TO_AI_MARKET = {
@@ -37,69 +42,98 @@ LINE_LABELS = {
 
 
 def fetch_todays_fixtures():
-    """Fetch upcoming fixtures with ALL over/under lines from The Odds API"""
+    """Fetch today's fixtures with over/under odds from SportMonks API"""
+    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    url = (
+        f"{SPORTMONKS_BASE}/fixtures/date/{today}"
+        f"?api_token={SPORTMONKS_TOKEN}"
+        f"&include=participants;league;odds.market"
+        f"&filters=fixtureLeagues:{LEAGUE_FILTER}"
+        f"&per_page=50"
+    )
+
     all_fixtures = []
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = json.loads(resp.read().decode())
 
-    for sport in LEAGUES:
-        try:
-            url = (
-                f"{ODDS_API_BASE}/sports/{sport}/odds"
-                f"?apiKey={ODDS_API_KEY}"
-                f"&regions=uk,eu"
-                f"&markets=totals"
-                f"&oddsFormat=decimal"
-            )
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                data = json.loads(resp.read().decode())
+        events = body.get('data', [])
+        for event in events:
+            fixture = _parse_fixture(event)
+            if fixture:
+                all_fixtures.append(fixture)
 
-            for event in data:
-                fixture = _parse_fixture(event, sport)
-                if fixture:
-                    all_fixtures.append(fixture)
-
-        except urllib.error.URLError as e:
-            print(f"⚠️ Error fetching {sport}: {e}")
-        except Exception as e:
-            print(f"⚠️ Unexpected error for {sport}: {e}")
+    except urllib.error.URLError as e:
+        print(f"⚠️ Error fetching SportMonks fixtures: {e}")
+    except Exception as e:
+        print(f"⚠️ Unexpected error fetching fixtures: {e}")
 
     print(f"✅ Fetched {len(all_fixtures)} fixtures with odds")
     return all_fixtures
 
 
-def _parse_fixture(event, sport_key):
-    """Parse a single event, extracting ALL over/under lines"""
+def _parse_fixture(event):
+    """Parse a single SportMonks fixture, extracting over/under lines"""
     try:
-        home = event.get('home_team', '')
-        away = event.get('away_team', '')
-        commence = event.get('commence_time', '')
-        bookmakers = event.get('bookmakers', [])
+        participants = event.get('participants', [])
+        home_team = away_team = ''
+        home_logo = away_logo = ''
+        home_short = away_short = ''
 
-        # Collect all available lines from first bookmaker
-        lines = {}  # {point: {'over': price, 'under': price}}
+        for p in participants:
+            loc = (p.get('meta') or {}).get('location', '')
+            if loc == 'home':
+                home_team = p.get('name', '')
+                home_logo = p.get('image_path', '')
+                home_short = p.get('short_code', '')
+            elif loc == 'away':
+                away_team = p.get('name', '')
+                away_logo = p.get('image_path', '')
+                away_short = p.get('short_code', '')
 
-        for bookie in bookmakers:
-            markets = bookie.get('markets', [])
-            for market in markets:
-                if market.get('key') != 'totals':
-                    continue
-                outcomes = market.get('outcomes', [])
-                for outcome in outcomes:
-                    point = outcome.get('point')
-                    price = outcome.get('price')
-                    name = outcome.get('name')
-                    if point is not None and price is not None:
-                        if point not in lines:
-                            lines[point] = {}
-                        if name == 'Over':
-                            lines[point]['over'] = float(price)
-                        elif name == 'Under':
-                            lines[point]['under'] = float(price)
-            if lines:
-                break  # Use first bookmaker with data
-
-        if not lines:
+        if not home_team or not away_team:
             return None
+
+        league_data = event.get('league') or {}
+        league_id = league_data.get('id', event.get('league_id', 0))
+        league_name = _league_name(league_id)
+        league_logo = league_data.get('image_path', '')
+
+        starting_at = event.get('starting_at', '')
+
+        # Parse over/under odds — collect best (lowest) Over odds per line
+        odds_list = event.get('odds', [])
+        lines = {}  # {total_float: {'over': best_odds, 'under': best_odds}}
+
+        for odd in odds_list:
+            market = odd.get('market') or {}
+            dev_name = market.get('developer_name', '')
+            mkt_name = market.get('name', '')
+            if 'OVER_UNDER' not in dev_name and 'Over/Under' not in mkt_name:
+                continue
+
+            label = (odd.get('label') or '').strip()
+            total_str = odd.get('total')
+            value_str = odd.get('value')
+            if total_str is None or value_str is None:
+                continue
+
+            try:
+                total = float(total_str)
+                value = float(value_str)
+            except (ValueError, TypeError):
+                continue
+
+            if total not in lines:
+                lines[total] = {}
+
+            if label == 'Over':
+                if 'over' not in lines[total] or value < lines[total]['over']:
+                    lines[total]['over'] = value
+            elif label == 'Under':
+                if 'under' not in lines[total] or value < lines[total]['under']:
+                    lines[total]['under'] = value
 
         # Filter to useful lines with reasonable odds
         available_lines = {}
@@ -116,11 +150,17 @@ def _parse_fixture(event, sport_key):
             return None
 
         return {
-            'home_team': home,
-            'away_team': away,
-            'commence_time': commence,
-            'league': sport_key,
-            'lines': available_lines,  # All available over/under lines
+            'home_team': home_team,
+            'away_team': away_team,
+            'commence_time': starting_at,
+            'league': league_id,
+            'league_name': league_name,
+            'league_logo': league_logo,
+            'home_logo': home_logo,
+            'away_logo': away_logo,
+            'home_short_code': home_short,
+            'away_short_code': away_short,
+            'lines': available_lines,
         }
     except Exception:
         return None
@@ -174,6 +214,12 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                 'away_team': away,
                 'commence_time': fix['commence_time'],
                 'league': fix['league'],
+                'league_name': fix.get('league_name', ''),
+                'league_logo': fix.get('league_logo', ''),
+                'home_logo': fix.get('home_logo', ''),
+                'away_logo': fix.get('away_logo', ''),
+                'home_short_code': fix.get('home_short_code', ''),
+                'away_short_code': fix.get('away_short_code', ''),
                 'line': point,
                 'market': LINE_LABELS.get(point, f'Over {point} Goals'),
                 'odds': odds,
@@ -198,6 +244,12 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                 'away_team': away,
                 'commence_time': fix['commence_time'],
                 'league': fix['league'],
+                'league_name': fix.get('league_name', ''),
+                'league_logo': fix.get('league_logo', ''),
+                'home_logo': fix.get('home_logo', ''),
+                'away_logo': fix.get('away_logo', ''),
+                'home_short_code': fix.get('home_short_code', ''),
+                'away_short_code': fix.get('away_short_code', ''),
                 'line': 1.5,
                 'market': 'Over 1.5 Goals',
                 'odds': synth_odds,
@@ -273,7 +325,7 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                 used_matches.add(match_key)
 
     return {
-        'date': datetime.utcnow().strftime('%Y-%m-%d'),
+        'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
         'total_fixtures_analyzed': len(fixtures),
         'slip': {
             'matches': _format_slip_matches(slip_matches),
@@ -294,6 +346,11 @@ def _format_slip_matches(matches):
             'away_team': m['away_team'],
             'match': f"{m['home_team']} vs {m['away_team']}",
             'league': _league_name(m['league']),
+            'league_logo': m.get('league_logo', ''),
+            'home_logo': m.get('home_logo', ''),
+            'away_logo': m.get('away_logo', ''),
+            'home_short_code': m.get('home_short_code', ''),
+            'away_short_code': m.get('away_short_code', ''),
             'kickoff': m['commence_time'],
             'market': m['market'],
             'odds': m['odds'],
@@ -321,6 +378,11 @@ def _format_all_predictions(predictions):
             'away_team': p['away_team'],
             'match': f"{p['home_team']} vs {p['away_team']}",
             'league': _league_name(p['league']),
+            'league_logo': p.get('league_logo', ''),
+            'home_logo': p.get('home_logo', ''),
+            'away_logo': p.get('away_logo', ''),
+            'home_short_code': p.get('home_short_code', ''),
+            'away_short_code': p.get('away_short_code', ''),
             'kickoff': p['commence_time'],
             'market': p['market'],
             'odds': p['odds'],
@@ -342,12 +404,5 @@ def _slip_confidence(matches):
     return 'LOW'
 
 
-def _league_name(key):
-    names = {
-        'soccer_epl': 'Premier League',
-        'soccer_spain_la_liga': 'La Liga',
-        'soccer_germany_bundesliga': 'Bundesliga',
-        'soccer_italy_serie_a': 'Serie A',
-        'soccer_france_ligue_one': 'Ligue 1',
-    }
-    return names.get(key, key)
+def _league_name(league_id):
+    return LEAGUE_IDS.get(league_id, f'League {league_id}')
