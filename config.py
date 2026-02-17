@@ -34,9 +34,14 @@ MARKETS = {
 # Confidence thresholds
 MIN_CONFIDENCE = 0.65  # 65% minimum to include
 
-# Odds limits
-MAX_TOTAL_ODDS = 2.10
+# Odds limits — 2-Odds Rollover System
+MAX_TOTAL_ODDS = 2.60
+IDEAL_MIN_ODDS = 2.00
+IDEAL_MAX_ODDS = 2.30
+MAX_SINGLE_ODDS = 1.57
+MIN_SINGLE_ODDS = 1.10
 MAX_MATCHES = 4
+MIN_EDGE = 0.05  # 5% edge minimum with stats
 
 # Feature columns
 FEATURE_COLUMNS = [
@@ -67,7 +72,7 @@ FEATURE_COLUMNS = [
     'league_avg_goals',
     'league_over15_rate',
     
-    # Odds (from The Odds API)
+    # Odds (from SportMonks market data)
     'over15_odds',
     'under15_odds',
 ]

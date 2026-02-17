@@ -1,10 +1,12 @@
 """
-Flask API for AI Football Predictions
+Flask API for AI Football Predictions — Hybrid Architecture
+SportMonks data → XGBoost AI → Statistical Qualification → Risk Governor
 """
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from models.multi_market_predictor import MultiMarketPredictor
 from utils.team_stats import TeamStatsCalculator
+from utils.sportmonks_stats import fetch_team_stats, fetch_h2h, clear_cache
 from utils.fixture_fetcher import fetch_todays_fixtures, build_daily_slip, build_parlay_slip
 import os
 
@@ -17,18 +19,30 @@ predictor = MultiMarketPredictor()
 predictor.load_models('models/trained')
 print("✅ Models loaded!")
 
-# Load team stats from historical data
-print("🔄 Loading team statistics...")
+# Load team stats from historical data (CSV fallback)
+print("🔄 Loading team statistics (CSV fallback)...")
 stats_calculator = TeamStatsCalculator('data/raw/all_matches.csv')
 print("✅ Team stats ready!")
+
+# SportMonks live stats module (imported as functions, no init needed)
+class _SmStatsProxy:
+    """Thin wrapper so we can pass sm_stats as an object."""
+    def fetch_team_stats(self, team_id):
+        return fetch_team_stats(team_id)
+    def fetch_h2h(self, team1_id, team2_id):
+        return fetch_h2h(team1_id, team2_id)
+
+sm_stats = _SmStatsProxy()
+print("✅ SportMonks live stats module ready!")
 
 @app.route('/')
 def home():
     return jsonify({
         "service": "Rollover AI Prediction API",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "status": "running",
-        "models_loaded": 14
+        "models_loaded": 14,
+        "engine": "hybrid (SportMonks + XGBoost + Statistical Qualification)",
     })
 
 @app.route('/health')
@@ -157,15 +171,15 @@ def today_predictions():
     GET /api/today
     Optional query params:
         max_matches: int (1-4, default 4)
-        max_odds: float (default 2.10)
+        max_odds: float (default 2.60)
     
     Returns:
-        - Daily slip (1-4 best matches, combined odds <= 2.10)
+        - Daily slip (2-4 best matches, combined odds 1.80–2.60)
         - All analyzed fixtures with AI probabilities
     """
     try:
         max_matches = int(request.args.get('max_matches', 4))
-        max_odds = float(request.args.get('max_odds', 2.10))
+        max_odds = float(request.args.get('max_odds', 2.60))
         
         max_matches = min(max(max_matches, 1), 4)
         max_odds = min(max(max_odds, 1.5), 3.0)
@@ -187,15 +201,19 @@ def today_predictions():
                 'message': 'No fixtures available right now. Try again later.',
             })
         
-        print(f"🧠 Running AI predictions on {len(fixtures)} fixtures...")
+        print(f"🧠 Running hybrid predictions on {len(fixtures)} fixtures...")
+        # Clear SportMonks cache at start of each request
+        clear_cache()
         result = build_daily_slip(
             fixtures, predictor, stats_calculator,
             max_matches=max_matches,
             max_odds=max_odds,
+            sm_stats=sm_stats,
         )
         
         result['ai_model'] = {
-            'version': '1.0.0',
+            'version': '2.0.0',
+            'engine': 'hybrid',
             'markets_analyzed': 14,
             'teams_in_database': len(stats_calculator.get_all_teams()),
         }
@@ -251,6 +269,7 @@ def parlay_predictions():
             num_matches=num_matches,
             min_odds=min_odds,
             max_odds=max_odds,
+            sm_stats=sm_stats,
         )
 
         print(f"✅ Parlay: {result['slip']['match_count']} matches, "

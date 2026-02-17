@@ -15,7 +15,7 @@ SPORTMONKS_TOKEN = os.environ.get(
 )
 SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
-# Top league IDs (expanded to ensure daily coverage)
+# Top league IDs — 25 leagues for maximum daily coverage
 LEAGUE_IDS = {
     # Top 5 European Leagues
     8: 'Premier League',
@@ -30,7 +30,24 @@ LEAGUE_IDS = {
     600: 'Super Lig',
     271: 'Scottish Premiership',
     208: 'Belgian Pro League',
+    501: 'Scottish Championship',
+    325: 'Bundesliga 2',
+    387: 'Serie B',
+    648: 'Ligue 2',
+    27: 'Liga MX',
+    242: 'MLS',
+    609: 'Saudi Pro League',
+    513: 'Super Liga Argentina',
+    185: 'A-League',
+    244: 'J-League',
+    307: 'Swiss Super League',
+    99: 'Ekstraklasa',
+    570: 'Austrian Bundesliga',
+    636: 'Danish Superliga',
 }
+
+# Cup competitions to reject (rotation risk)
+CUP_LEAGUE_IDS = {2, 5, 7, 683, 15, 16}
 LEAGUE_FILTER = ','.join(str(lid) for lid in LEAGUE_IDS)
 
 # Map bookmaker lines to our AI markets
@@ -104,6 +121,7 @@ def _parse_fixture(event):
         home_team = away_team = ''
         home_logo = away_logo = ''
         home_short = away_short = ''
+        home_id = away_id = None
 
         for p in participants:
             loc = (p.get('meta') or {}).get('location', '')
@@ -111,10 +129,12 @@ def _parse_fixture(event):
                 home_team = p.get('name', '')
                 home_logo = p.get('image_path', '')
                 home_short = p.get('short_code', '')
+                home_id = p.get('id')
             elif loc == 'away':
                 away_team = p.get('name', '')
                 away_logo = p.get('image_path', '')
                 away_short = p.get('short_code', '')
+                away_id = p.get('id')
 
         if not home_team or not away_team:
             return None
@@ -250,6 +270,8 @@ def _parse_fixture(event):
         return {
             'home_team': home_team,
             'away_team': away_team,
+            'home_team_id': home_id,
+            'away_team_id': away_id,
             'commence_time': starting_at,
             'league': league_id,
             'league_name': league_name,
@@ -315,8 +337,13 @@ def _parse_ou_market(target, label, total_str, value):
             target[total]['under'] = value
 
 
-def _generate_match_options(fixtures, predictor, stats_calculator):
-    """Generate all match options from all markets for a list of fixtures."""
+def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None):
+    """
+    Generate all match options from all markets for a list of fixtures.
+    Now integrates live SportMonks stats + statistical qualification + edge calculation.
+    """
+    from utils.stat_qualifier import passes_odds_safety, qualify_and_score, confidence_label
+
     match_options = []
 
     for fix in fixtures:
@@ -324,13 +351,35 @@ def _generate_match_options(fixtures, predictor, stats_calculator):
         away = fix['away_team']
         markets = fix.get('markets', {})
 
-        # Build features
+        # --- Fetch live team stats from SportMonks ---
+        home_id = fix.get('home_team_id')
+        away_id = fix.get('away_team_id')
+        home_live = None
+        away_live = None
+        h2h_data = None
+
+        if sm_stats and home_id and away_id:
+            try:
+                home_live = sm_stats.fetch_team_stats(home_id)
+                away_live = sm_stats.fetch_team_stats(away_id)
+                h2h_data = sm_stats.fetch_h2h(home_id, away_id)
+            except Exception as e:
+                print(f"⚠️ Live stats error for {home} vs {away}: {e}")
+
+        # --- Build 18-feature dict for XGBoost ---
         primary_line = next(iter(fix['lines'].values()), {})
-        features = stats_calculator.build_match_features(
-            home, away,
-            over15_odds=primary_line.get('over_odds', 1.5),
-            under15_odds=primary_line.get('under_odds', 2.5),
-        )
+        if home_live and away_live:
+            features = _build_features_from_live(
+                home_live, away_live,
+                over15_odds=primary_line.get('over_odds', 1.5),
+                under15_odds=primary_line.get('under_odds', 2.5),
+            )
+        else:
+            features = stats_calculator.build_match_features(
+                home, away,
+                over15_odds=primary_line.get('over_odds', 1.5),
+                under15_odds=primary_line.get('under_odds', 2.5),
+            )
 
         # Run AI prediction for all 14 markets
         ai_pred = predictor.predict_match(features)
@@ -349,260 +398,233 @@ def _generate_match_options(fixtures, predictor, stats_calculator):
             'all_predictions': {k: round(float(v), 3) for k, v in ai_pred.items()},
         }
 
-        # === Over/Under lines (existing) ===
+        # Helper to add a qualified option
+        def _try_add(market_label, odds, ai_market_key, line=None, source='api'):
+            if not passes_odds_safety(market_label, odds):
+                return
+            raw_ai_prob = float(ai_pred.get(ai_market_key, 0.5))
+            qual = qualify_and_score(
+                market_label, odds, raw_ai_prob,
+                home_live, away_live, h2h_data,
+            )
+            if qual is None:
+                return
+            opt = dict(base_info)
+            opt.update({
+                'line': line,
+                'market': market_label,
+                'odds': odds,
+                'ai_prob': qual['ai_prob'],
+                'confidence': confidence_label(qual['edge']),
+                'edge': qual['edge'],
+                'stability': qual['stability'],
+                'composite_score': qual['composite_score'],
+                'source': source,
+            })
+            match_options.append(opt)
+
+        # === Over/Under lines ===
         for point, line_data in fix['lines'].items():
             odds = line_data['over_odds']
             ai_market = LINE_TO_AI_MARKET.get(point, 'ft_over_15')
-            ai_prob = float(ai_pred.get(ai_market, 0.5))
-
-            if point == 0.5:
-                ai_prob = min(ai_prob * 1.15, 0.99)
-            elif point == 1.5:
-                ai_prob = ai_prob * 1.05
-            elif point == 2.5:
-                ai_prob = ai_prob * 0.92
-            elif point == 3.5:
-                ai_prob = ai_prob * 0.75
-
-            match_options.append(_build_option(
-                base_info, odds, ai_prob,
-                LINE_LABELS.get(point, f'Over {point} Goals'),
-                line=point, source='api',
-            ))
-
-        # === Synthetic Over 1.5 market ===
-        ft_over15 = float(ai_pred.get('ft_over_15', 0.5))
-        if ft_over15 >= 0.70:
-            synth_odds = round(1.0 / (ft_over15 * 0.95), 2)
-            synth_odds = max(synth_odds, 1.10)
-            match_options.append(_build_option(
-                base_info, synth_odds, ft_over15,
-                'Over 1.5 Goals', line=1.5, source='ai_model',
-            ))
-
-        # === Home to Score (Yes) ===
-        hts = markets.get('home_to_score', {})
-        if 'yes' in hts and 1.01 <= hts['yes'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['home_to_score_yes'], 0.5))
-            match_options.append(_build_option(
-                base_info, hts['yes'], ai_prob,
-                'Home to Score', source='api',
-            ))
-
-        # === Away to Score (Yes) ===
-        ats = markets.get('away_to_score', {})
-        if 'yes' in ats and 1.01 <= ats['yes'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['away_to_score_yes'], 0.5))
-            match_options.append(_build_option(
-                base_info, ats['yes'], ai_prob,
-                'Away to Score', source='api',
-            ))
+            label = LINE_LABELS.get(point, f'Over {point} Goals')
+            _try_add(label, odds, ai_market, line=point)
 
         # === BTTS Yes ===
         btts_m = markets.get('btts', {})
-        if 'yes' in btts_m and 1.01 <= btts_m['yes'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['btts_yes'], 0.5))
-            match_options.append(_build_option(
-                base_info, btts_m['yes'], ai_prob,
-                'Both Teams to Score', source='api',
-            ))
+        if 'yes' in btts_m:
+            _try_add('Both Teams to Score', btts_m['yes'], AI_MARKET_MAP['btts_yes'])
 
-        # === First Half Over 0.5 ===
-        fhg = markets.get('first_half_goals', {})
-        if 0.5 in fhg and 'over' in fhg[0.5] and 1.01 <= fhg[0.5]['over'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['fh_over_05'], 0.5))
-            match_options.append(_build_option(
-                base_info, fhg[0.5]['over'], ai_prob,
-                '1H Over 0.5', source='api',
-            ))
-
-        # === Second Half Over 0.5 ===
-        shg = markets.get('second_half_goals', {})
-        if 0.5 in shg and 'over' in shg[0.5] and 1.01 <= shg[0.5]['over'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['sh_over_05'], 0.5))
-            match_options.append(_build_option(
-                base_info, shg[0.5]['over'], ai_prob,
-                '2H Over 0.5', source='api',
-            ))
-
-        # === Fulltime Result: Home Win ===
+        # === Fulltime Result ===
         ftr = markets.get('fulltime_result', {})
-        if 'home' in ftr and 1.01 <= ftr['home'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['home_win'], 0.5))
-            match_options.append(_build_option(
-                base_info, ftr['home'], ai_prob,
-                'Home Win', source='api',
-            ))
+        if 'home' in ftr:
+            _try_add('Home Win', ftr['home'], AI_MARKET_MAP['home_win'])
+        if 'away' in ftr:
+            _try_add('Away Win', ftr['away'], AI_MARKET_MAP['away_win'])
 
-        # === Fulltime Result: Away Win ===
-        if 'away' in ftr and 1.01 <= ftr['away'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['away_win'], 0.5))
-            match_options.append(_build_option(
-                base_info, ftr['away'], ai_prob,
-                'Away Win', source='api',
-            ))
-
-        # === Double Chance: Home or Draw ===
+        # === Double Chance ===
         dc = markets.get('double_chance', {})
-        if 'home_draw' in dc and 1.01 <= dc['home_draw'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['double_chance_home_draw'], 0.5))
-            match_options.append(_build_option(
-                base_info, dc['home_draw'], ai_prob,
-                'Home or Draw', source='api',
-            ))
+        if 'home_draw' in dc:
+            _try_add('Home or Draw', dc['home_draw'], AI_MARKET_MAP['double_chance_home_draw'])
+        if 'away_draw' in dc:
+            _try_add('Draw or Away', dc['away_draw'], AI_MARKET_MAP['double_chance_away_draw'])
+        if 'home_away' in dc:
+            _try_add('Home or Away', dc['home_away'], AI_MARKET_MAP['double_chance_home_away'])
 
-        # === Double Chance: Draw or Away ===
-        if 'away_draw' in dc and 1.01 <= dc['away_draw'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['double_chance_away_draw'], 0.5))
-            match_options.append(_build_option(
-                base_info, dc['away_draw'], ai_prob,
-                'Draw or Away', source='api',
-            ))
+        # === Team Goals ===
+        hts = markets.get('home_to_score', {})
+        if 'yes' in hts:
+            _try_add('Home to Score', hts['yes'], AI_MARKET_MAP['home_to_score_yes'])
+        ats = markets.get('away_to_score', {})
+        if 'yes' in ats:
+            _try_add('Away to Score', ats['yes'], AI_MARKET_MAP['away_to_score_yes'])
 
-        # === Double Chance: Home or Away ===
-        if 'home_away' in dc and 1.01 <= dc['home_away'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['double_chance_home_away'], 0.5))
-            match_options.append(_build_option(
-                base_info, dc['home_away'], ai_prob,
-                'Home or Away', source='api',
-            ))
+        # === Half Goals ===
+        fhg = markets.get('first_half_goals', {})
+        if 0.5 in fhg and 'over' in fhg[0.5]:
+            _try_add('1H Over 0.5', fhg[0.5]['over'], AI_MARKET_MAP['fh_over_05'])
+        shg = markets.get('second_half_goals', {})
+        if 0.5 in shg and 'over' in shg[0.5]:
+            _try_add('2H Over 0.5', shg[0.5]['over'], AI_MARKET_MAP['sh_over_05'])
 
-        # === Home Goals Over 0.5 ===
+        # === Home/Away Goals Over 0.5 ===
         hg = markets.get('home_goals', {})
-        if 0.5 in hg and 'over' in hg[0.5] and 1.01 <= hg[0.5]['over'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['home_over_05'], 0.5))
-            match_options.append(_build_option(
-                base_info, hg[0.5]['over'], ai_prob,
-                'Home Over 0.5 Goals', source='api',
-            ))
-
-        # === Away Goals Over 0.5 ===
+        if 0.5 in hg and 'over' in hg[0.5]:
+            _try_add('Home Over 0.5 Goals', hg[0.5]['over'], AI_MARKET_MAP['home_over_05'])
         ag = markets.get('away_goals', {})
-        if 0.5 in ag and 'over' in ag[0.5] and 1.01 <= ag[0.5]['over'] <= 5.0:
-            ai_prob = float(ai_pred.get(AI_MARKET_MAP['away_over_05'], 0.5))
-            match_options.append(_build_option(
-                base_info, ag[0.5]['over'], ai_prob,
-                'Away Over 0.5 Goals', source='api',
-            ))
+        if 0.5 in ag and 'over' in ag[0.5]:
+            _try_add('Away Over 0.5 Goals', ag[0.5]['over'], AI_MARKET_MAP['away_over_05'])
 
     return match_options
 
 
-def _build_option(base_info, odds, ai_prob, market_label, line=None, source='api'):
-    """Build a single match option dict."""
-    confidence = 'HIGH' if ai_prob >= 0.75 else 'MEDIUM' if ai_prob >= 0.65 else 'LOW'
-    implied = 1.0 / odds if odds > 0 else 0.5
-    edge = ai_prob - implied
-    opt = dict(base_info)
-    opt.update({
-        'line': line,
-        'market': market_label,
-        'odds': odds,
-        'ai_prob': ai_prob,
-        'confidence': confidence,
-        'edge': edge,
-        'score': ai_prob * max(edge, 0) * 100,
-        'source': source,
-    })
-    return opt
+def _build_features_from_live(home_stats, away_stats, over15_odds=1.5, under15_odds=2.5):
+    """Build the 18-feature dict the XGBoost models expect, using live SportMonks stats."""
+    return {
+        'home_goals_per_game': home_stats['avg_goals_scored'],
+        'home_goals_conceded_per_game': home_stats['avg_goals_conceded'],
+        'home_over15_rate': home_stats['over15_rate'],
+        'home_over05_rate': home_stats.get('scored_in_rate', 0.78),
+        'home_first_half_goals': home_stats['avg_goals_scored'] * 0.45,
+        'away_goals_per_game': away_stats['avg_goals_scored'],
+        'away_goals_conceded_per_game': away_stats['avg_goals_conceded'],
+        'away_over15_rate': away_stats['over15_rate'],
+        'away_over05_rate': away_stats.get('scored_in_rate', 0.70),
+        'away_first_half_goals': away_stats['avg_goals_scored'] * 0.42,
+        'home_home_goals': home_stats['home_avg_scored'],
+        'home_home_conceded': home_stats['home_avg_conceded'],
+        'away_away_goals': away_stats['away_avg_scored'],
+        'away_away_conceded': away_stats['away_avg_conceded'],
+        'total_expected_goals': home_stats['home_avg_scored'] + away_stats['away_avg_scored'],
+        'defensive_strength': home_stats['home_avg_conceded'] + away_stats['away_avg_conceded'],
+        'over15_odds': over15_odds,
+        'under15_odds': under15_odds,
+    }
 
 
-def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_odds=2.10):
+def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_odds=2.60, sm_stats=None):
     """
-    Build the best slip from today's fixtures using mixed markets.
-    Uses AI probabilities to create fair odds for markets the API doesn't provide,
-    enabling lower-odds selections that combine under the target.
+    Build the best daily rollover slip using hybrid architecture:
+    SportMonks live stats → XGBoost AI → Statistical qualification → Risk governor.
+
+    Rules:
+    - Max 4 matches, min 2
+    - Combined odds 1.80 – 2.60, ideal 2.00 – 2.30
+    - Single pick max 1.57
+    - Sorted by composite score (edge*0.4 + ai_prob*0.35 + stability*0.25)
     """
-    match_options = _generate_match_options(fixtures, predictor, stats_calculator)
+    from itertools import combinations
 
-    # Sort by AI probability descending
-    match_options.sort(key=lambda x: x['ai_prob'], reverse=True)
+    match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats)
 
-    # === SMART SLIP BUILDER ===
-    slip_matches = []
-    combined_odds = 1.0
-    used_matches = set()
+    if not match_options:
+        return _empty_result(fixtures)
 
-    # Phase 1: Try to add HIGH confidence matches with lower odds first
+    # Sort by composite score descending
+    match_options.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
+
+    # One option per match (best market per fixture)
+    best_per_match = {}
     for opt in match_options:
-        match_key = f"{opt['home_team']}_{opt['away_team']}"
-        if match_key in used_matches:
+        key = f"{opt['home_team']}_{opt['away_team']}"
+        if key not in best_per_match:
+            best_per_match[key] = opt
+
+    candidates = list(best_per_match.values())
+
+    if not candidates:
+        return _empty_result(fixtures)
+
+    # Try 3-match, 4-match, then 2-match combos
+    best_slip = None
+    best_score = -1
+
+    for target_count in [3, 4, 2]:
+        if len(candidates) < target_count:
             continue
-        if len(slip_matches) >= max_matches:
-            break
-        if opt['confidence'] != 'HIGH':
-            continue
 
-        new_odds = combined_odds * opt['odds']
-        if new_odds <= max_odds:
-            slip_matches.append(opt)
-            combined_odds = new_odds
-            used_matches.add(match_key)
+        for combo in combinations(candidates[:12], target_count):
+            combined = 1.0
+            for pick in combo:
+                combined *= pick['odds']
 
-    # Phase 2: If not enough, add MEDIUM confidence
-    if len(slip_matches) < 2:
-        for opt in match_options:
-            match_key = f"{opt['home_team']}_{opt['away_team']}"
-            if match_key in used_matches:
-                continue
-            if len(slip_matches) >= max_matches:
-                break
-            if opt['confidence'] == 'LOW':
+            if combined < 1.80 or combined > max_odds:
                 continue
 
-            new_odds = combined_odds * opt['odds']
-            if new_odds <= max_odds:
-                slip_matches.append(opt)
-                combined_odds = new_odds
-                used_matches.add(match_key)
+            # Score: prefer 2.00-2.30 ideal range
+            avg_composite = sum(p.get('composite_score', 0) for p in combo) / len(combo)
+            ideal_bonus = 1.0
+            if 2.00 <= combined <= 2.30:
+                ideal_bonus = 1.15
+            elif 1.90 <= combined <= 2.40:
+                ideal_bonus = 1.08
 
-    # Phase 3: If still only 1 match, force-add lowest-odds high-prob match
-    if len(slip_matches) < 2 and match_options:
-        low_odds_options = sorted(
-            [o for o in match_options
-             if f"{o['home_team']}_{o['away_team']}" not in used_matches
-             and o['ai_prob'] >= 0.65],
-            key=lambda x: x['odds']
-        )
-        for opt in low_odds_options:
-            match_key = f"{opt['home_team']}_{opt['away_team']}"
-            if match_key in used_matches:
-                continue
-            if len(slip_matches) >= max_matches:
-                break
-            new_odds = combined_odds * opt['odds']
-            if new_odds <= max_odds:
-                slip_matches.append(opt)
-                combined_odds = new_odds
-                used_matches.add(match_key)
+            score = avg_composite * ideal_bonus
+
+            if score > best_score:
+                best_score = score
+                best_slip = list(combo)
+
+    if not best_slip:
+        # Fallback: just take top 2 picks if odds work
+        if len(candidates) >= 2:
+            top2 = candidates[:2]
+            combined = top2[0]['odds'] * top2[1]['odds']
+            if 1.50 <= combined <= max_odds:
+                best_slip = top2
+        # Last resort: single strongest pick
+        if not best_slip and candidates:
+            best_slip = [candidates[0]]
+
+    if not best_slip:
+        return _empty_result(fixtures)
+
+    combined_odds = 1.0
+    for p in best_slip:
+        combined_odds *= p['odds']
 
     return {
         'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
         'total_fixtures_analyzed': len(fixtures),
         'slip': {
-            'matches': _format_slip_matches(slip_matches),
-            'match_count': len(slip_matches),
+            'matches': _format_slip_matches(best_slip),
+            'match_count': len(best_slip),
             'combined_odds': round(combined_odds, 2),
-            'slip_confidence': _slip_confidence(slip_matches),
+            'slip_confidence': _slip_confidence(best_slip),
         },
         'all_predictions': _format_all_predictions(match_options),
     }
 
 
-def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00):
+def _empty_result(fixtures):
+    return {
+        'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),
+        'total_fixtures_analyzed': len(fixtures) if fixtures else 0,
+        'slip': {
+            'matches': [],
+            'match_count': 0,
+            'combined_odds': 0,
+            'slip_confidence': 'NONE',
+        },
+        'all_predictions': [],
+        'message': 'No safe rollover picks today.',
+    }
+
+
+def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None):
     """
     Build a higher-odds parlay from ALL markets.
     User controls number of matches (2-20).
     Each match can use any market (1X2, BTTS, Over/Under, DC, etc.)
-    Select matches with highest AI probability within the odds range.
+    Select matches with highest composite score within the odds range.
     """
-    match_options = _generate_match_options(fixtures, predictor, stats_calculator)
+    match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats)
 
     # Filter to options within odds range
     filtered = [o for o in match_options if min_odds <= o['odds'] <= max_odds]
 
-    # Sort by AI probability descending
-    filtered.sort(key=lambda x: x['ai_prob'], reverse=True)
+    # Sort by composite score descending
+    filtered.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
 
     # Pick top num_matches unique matches (one market per match)
     slip_matches = []
