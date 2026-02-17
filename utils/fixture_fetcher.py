@@ -582,11 +582,6 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
         # Last resort: single strongest pick
         if not best_slip and match_options:
             best_slip = [match_options[0]]
-                if best_slip:
-                    break
-        # Last resort: single strongest pick
-        if not best_slip and candidates:
-            best_slip = [candidates[0]]
 
     if not best_slip:
         return _empty_result(fixtures)
@@ -718,6 +713,7 @@ def _format_all_predictions(predictions):
             'ai_probability': round(p['ai_prob'] * 100, 1),
             'confidence': p['confidence'],
             'edge': round(p['edge'] * 100, 1),
+            'composite_score': round(p.get('composite_score', 0), 3),
         })
     return result
 
