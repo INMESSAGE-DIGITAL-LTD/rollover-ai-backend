@@ -5,7 +5,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from models.multi_market_predictor import MultiMarketPredictor
 from utils.team_stats import TeamStatsCalculator
-from utils.fixture_fetcher import fetch_todays_fixtures, build_daily_slip
+from utils.fixture_fetcher import fetch_todays_fixtures, build_daily_slip, build_parlay_slip
 import os
 
 app = Flask(__name__)
@@ -207,6 +207,59 @@ def today_predictions():
         
     except Exception as e:
         print(f"❌ Error in /api/today: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/parlay', methods=['GET'])
+def parlay_predictions():
+    """
+    AI Parlay - generate higher-odds multi-match slips.
+    
+    GET /api/parlay
+    Query params:
+        num_matches: int (2-20, default 5)
+        min_odds: float (default 1.30)
+        max_odds: float (default 3.00)
+    """
+    try:
+        num_matches = int(request.args.get('num_matches', 5))
+        min_odds = float(request.args.get('min_odds', 1.30))
+        max_odds = float(request.args.get('max_odds', 3.00))
+
+        num_matches = min(max(num_matches, 2), 20)
+        min_odds = min(max(min_odds, 1.10), 5.0)
+        max_odds = min(max(max_odds, min_odds + 0.1), 10.0)
+
+        print(f"🎰 Parlay: {num_matches} matches, odds {min_odds}-{max_odds}")
+        fixtures = fetch_todays_fixtures()
+
+        if not fixtures:
+            return jsonify({
+                'date': __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d'),
+                'total_fixtures_analyzed': 0,
+                'slip': {
+                    'matches': [],
+                    'match_count': 0,
+                    'combined_odds': 0,
+                    'slip_confidence': 'NONE',
+                },
+                'all_predictions': [],
+                'message': 'No fixtures available right now.',
+            })
+
+        result = build_parlay_slip(
+            fixtures, predictor, stats_calculator,
+            num_matches=num_matches,
+            min_odds=min_odds,
+            max_odds=max_odds,
+        )
+
+        print(f"✅ Parlay: {result['slip']['match_count']} matches, "
+              f"odds {result['slip']['combined_odds']}")
+
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"❌ Error in /api/parlay: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/teams', methods=['GET'])
