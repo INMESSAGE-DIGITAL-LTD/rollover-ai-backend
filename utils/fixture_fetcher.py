@@ -504,16 +504,10 @@ def _build_features_from_live(home_stats, away_stats, over15_odds=1.5, under15_o
 
 def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_odds=2.60, sm_stats=None):
     """
-    Build the best daily rollover slip using hybrid architecture:
-    SportMonks live stats → XGBoost AI → Statistical qualification → Risk governor.
-
-    Rules:
-    - Max 4 matches, min 2
-    - Combined odds 1.80 – 2.60, ideal 2.00 – 2.30
-    - Single pick max 1.57
-    - Sorted by composite score (edge*0.4 + ai_prob*0.35 + stability*0.25)
+    Build the best daily rollover slip using hybrid architecture.
+    Tries multiple market options per fixture to find ideal combined odds.
     """
-    from itertools import combinations
+    from itertools import product
 
     match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats)
 
@@ -523,71 +517,71 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
     # Sort by composite score descending
     match_options.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
 
-    # One option per match (best market per fixture)
-    best_per_match = {}
+    # Group options by fixture (top 3 per match)
+    fixture_options = {}
     for opt in match_options:
         key = f"{opt['home_team']}_{opt['away_team']}"
-        if key not in best_per_match:
-            best_per_match[key] = opt
+        if key not in fixture_options:
+            fixture_options[key] = []
+        if len(fixture_options[key]) < 3:
+            fixture_options[key].append(opt)
 
-    candidates = list(best_per_match.values())
+    fixture_keys = list(fixture_options.keys())
+    num_fixtures = len(fixture_keys)
 
-    if not candidates:
+    if num_fixtures == 0:
         return _empty_result(fixtures)
 
-    # Try 3-match, 4-match, then 2-match combos
     best_slip = None
     best_score = -1
 
+    # Try all combinations of fixtures, with top market options per fixture
     for target_count in [3, 4, 2]:
-        if len(candidates) < target_count:
+        if num_fixtures < target_count:
             continue
 
-        for combo in combinations(candidates[:12], target_count):
-            combined = 1.0
-            for pick in combo:
-                combined *= pick['odds']
+        from itertools import combinations as combs
+        for fixture_combo in combs(range(num_fixtures), target_count):
+            # For each fixture in combo, try its top market options
+            option_lists = [fixture_options[fixture_keys[i]] for i in fixture_combo]
+            for market_combo in product(*option_lists):
+                combined = 1.0
+                for pick in market_combo:
+                    combined *= pick['odds']
 
-            if combined < 1.80 or combined > max_odds:
-                continue
+                if combined < 1.80 or combined > max_odds:
+                    continue
 
-            # Score: prefer 2.00-2.30 ideal range
-            avg_composite = sum(p.get('composite_score', 0) for p in combo) / len(combo)
-            ideal_bonus = 1.0
-            if 2.00 <= combined <= 2.30:
-                ideal_bonus = 1.15
-            elif 1.90 <= combined <= 2.40:
-                ideal_bonus = 1.08
+                avg_composite = sum(p.get('composite_score', 0) for p in market_combo) / len(market_combo)
+                ideal_bonus = 1.0
+                if 2.00 <= combined <= 2.30:
+                    ideal_bonus = 1.20
+                elif 1.90 <= combined <= 2.40:
+                    ideal_bonus = 1.10
+                elif 1.80 <= combined < 1.90:
+                    ideal_bonus = 0.95  # Slightly penalize below 1.90
 
-            score = avg_composite * ideal_bonus
+                score = avg_composite * ideal_bonus
 
-            if score > best_score:
-                best_score = score
-                best_slip = list(combo)
+                if score > best_score:
+                    best_score = score
+                    best_slip = list(market_combo)
 
     if not best_slip:
-        # Fallback: just take top 2 picks if odds work (even from same match)
-        if len(candidates) >= 2:
-            top2 = candidates[:2]
-            combined = top2[0]['odds'] * top2[1]['odds']
-            if 1.50 <= combined <= max_odds:
-                best_slip = top2
-        # Try mixing different markets from same match if still low
-        if not best_slip and len(match_options) >= 2:
-            # Allow same match, different markets
-            used_combos = set()
-            for i, a in enumerate(match_options[:8]):
-                for j, b in enumerate(match_options[:8]):
-                    if i >= j:
-                        continue
-                    combo_key = f"{a['market']}_{b['market']}"
-                    if combo_key in used_combos:
-                        continue
-                    used_combos.add(combo_key)
-                    combined = a['odds'] * b['odds']
-                    if 1.80 <= combined <= max_odds:
-                        best_slip = [a, b]
-                        break
+        # Fallback: any 2 picks (even same match, different markets) hitting 1.80+
+        for i, a in enumerate(match_options[:10]):
+            for j, b in enumerate(match_options[:10]):
+                if i >= j:
+                    continue
+                combined = a['odds'] * b['odds']
+                if 1.80 <= combined <= max_odds:
+                    best_slip = [a, b]
+                    break
+            if best_slip:
+                break
+        # Last resort: single strongest pick
+        if not best_slip and match_options:
+            best_slip = [match_options[0]]
                 if best_slip:
                     break
         # Last resort: single strongest pick
