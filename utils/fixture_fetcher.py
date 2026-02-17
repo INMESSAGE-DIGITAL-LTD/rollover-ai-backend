@@ -15,13 +15,17 @@ SPORTMONKS_TOKEN = os.environ.get(
 )
 SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
-# Top-5 league IDs
+# Top league IDs (expanded to ensure daily coverage)
 LEAGUE_IDS = {
     8: 'Premier League',
     564: 'La Liga',
     82: 'Bundesliga',
     384: 'Serie A',
     301: 'Ligue 1',
+    9: 'Championship',
+    72: 'Eredivisie',
+    462: 'Liga Portugal',
+    600: 'Super Lig',
 }
 LEAGUE_FILTER = ','.join(str(lid) for lid in LEAGUE_IDS)
 
