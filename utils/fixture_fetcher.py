@@ -6,7 +6,7 @@ import os
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 
 SPORTMONKS_TOKEN = os.environ.get(
@@ -15,7 +15,7 @@ SPORTMONKS_TOKEN = os.environ.get(
 )
 SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
-# Top league IDs — 25 leagues for maximum daily coverage
+# Top league IDs — expanded for maximum daily coverage
 LEAGUE_IDS = {
     # Top 5 European Leagues
     8: 'Premier League',
@@ -23,7 +23,7 @@ LEAGUE_IDS = {
     82: 'Bundesliga',
     384: 'Serie A',
     301: 'Ligue 1',
-    # More European Leagues
+    # Second-tier European Leagues
     9: 'Championship',
     72: 'Eredivisie',
     462: 'Liga Portugal',
@@ -34,16 +34,35 @@ LEAGUE_IDS = {
     325: 'Bundesliga 2',
     387: 'Serie B',
     648: 'Ligue 2',
+    # Americas
     27: 'Liga MX',
     242: 'MLS',
-    609: 'Saudi Pro League',
     513: 'Super Liga Argentina',
+    # Asia / Middle East / Oceania
+    609: 'Saudi Pro League',
     185: 'A-League',
     244: 'J-League',
+    # More European
     307: 'Swiss Super League',
     99: 'Ekstraklasa',
     570: 'Austrian Bundesliga',
     636: 'Danish Superliga',
+    # Additional leagues for low-fixture days
+    602: 'Greek Super League',
+    390: 'Czech First League',
+    462: 'Liga Portugal',
+    392: 'Romanian Liga I',
+    326: 'Championship',       # English League One
+    583: 'Norwegian Eliteserien',
+    573: 'Swedish Allsvenskan',
+    281: 'Ukrainian Premier League',
+    218: 'Croatian HNL',
+    409: 'Serbian SuperLiga',
+    262: 'Brazilian Serie A',
+    729: 'K-League 1',
+    169: 'Chinese Super League',
+    188: 'Indian Super League',
+    1007: 'Copa Libertadores',
 }
 
 # Cup competitions to reject (rotation risk)
@@ -83,17 +102,46 @@ AI_MARKET_MAP = {
 
 
 def fetch_todays_fixtures():
-    """Fetch today's fixtures with over/under odds from SportMonks API"""
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    """Fetch today's fixtures with over/under odds from SportMonks API.
+    If today has fewer than 4 fixtures, also fetches tomorrow's."""
+    today = datetime.now(timezone.utc)
+    dates_to_fetch = [today.strftime('%Y-%m-%d')]
+
+    all_fixtures = []
+
+    # Fetch today first
+    fixtures_today = _fetch_fixtures_for_date(dates_to_fetch[0])
+    all_fixtures.extend(fixtures_today)
+
+    # If < 4 fixtures, also fetch tomorrow
+    if len(all_fixtures) < 4:
+        tomorrow = (today + timedelta(days=1)).strftime('%Y-%m-%d')
+        print(f"📅 Only {len(all_fixtures)} fixtures today, also fetching {tomorrow}")
+        fixtures_tomorrow = _fetch_fixtures_for_date(tomorrow)
+        all_fixtures.extend(fixtures_tomorrow)
+
+    # If still < 4, fetch day after tomorrow
+    if len(all_fixtures) < 4:
+        day_after = (today + timedelta(days=2)).strftime('%Y-%m-%d')
+        print(f"📅 Still only {len(all_fixtures)} fixtures, also fetching {day_after}")
+        fixtures_day_after = _fetch_fixtures_for_date(day_after)
+        all_fixtures.extend(fixtures_day_after)
+
+    print(f"✅ Fetched {len(all_fixtures)} fixtures total across {len(set(f['commence_time'][:10] for f in all_fixtures)) if all_fixtures else 0} day(s)")
+    return all_fixtures
+
+
+def _fetch_fixtures_for_date(date_str):
+    """Fetch fixtures for a single date from SportMonks."""
     url = (
-        f"{SPORTMONKS_BASE}/fixtures/date/{today}"
+        f"{SPORTMONKS_BASE}/fixtures/date/{date_str}"
         f"?api_token={SPORTMONKS_TOKEN}"
         f"&include=participants;league;odds.market"
         f"&filters=fixtureLeagues:{LEAGUE_FILTER}"
         f"&per_page=50"
     )
 
-    all_fixtures = []
+    fixtures = []
     try:
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=20) as resp:
@@ -103,15 +151,27 @@ def fetch_todays_fixtures():
         for event in events:
             fixture = _parse_fixture(event)
             if fixture:
-                all_fixtures.append(fixture)
+                fixtures.append(fixture)
+
+        # Handle pagination
+        pagination = body.get('pagination', {})
+        if pagination.get('has_more') or (pagination.get('last_page') and pagination.get('current_page', 1) < pagination['last_page']):
+            page2_url = url + '&page=2'
+            req2 = urllib.request.Request(page2_url)
+            with urllib.request.urlopen(req2, timeout=20) as resp2:
+                body2 = json.loads(resp2.read().decode())
+            for event in body2.get('data', []):
+                fixture = _parse_fixture(event)
+                if fixture:
+                    fixtures.append(fixture)
 
     except urllib.error.URLError as e:
-        print(f"⚠️ Error fetching SportMonks fixtures: {e}")
+        print(f"⚠️ Error fetching fixtures for {date_str}: {e}")
     except Exception as e:
-        print(f"⚠️ Unexpected error fetching fixtures: {e}")
+        print(f"⚠️ Unexpected error for {date_str}: {e}")
 
-    print(f"✅ Fetched {len(all_fixtures)} fixtures with odds")
-    return all_fixtures
+    print(f"  📅 {date_str}: {len(fixtures)} fixtures")
+    return fixtures
 
 
 def _parse_fixture(event):
