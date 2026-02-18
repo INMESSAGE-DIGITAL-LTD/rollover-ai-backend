@@ -9,15 +9,12 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
-FOOTBALL_DATA_TOKEN = os.environ.get('FOOTBALL_DATA_TOKEN', '')
+FOOTBALL_DATA_TOKEN = os.environ.get('FOOTBALL_DATA_TOKEN', 'd09de38c27b546d592d286fe94a4cd2f')
 FOOTBALL_DATA_BASE = 'https://api.football-data.org/v4'
 
-# Competitions to fetch (code → display name)
-# TIER_ONE (free): CL
-# TIER_TWO (free with key): EL
+# Free tier (TIER_ONE) competitions accessible without paid plan
 FALLBACK_COMPETITIONS = {
     'CL': 'UEFA Champions League',
-    'EL': 'UEFA Europa League',
 }
 
 # Estimated odds by market based on team strength differential
