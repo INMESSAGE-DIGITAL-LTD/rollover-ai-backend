@@ -355,6 +355,18 @@ def fixtures_by_date(date_str):
         print(f"❌ Error in /api/fixtures/{date_str}: {e}")
         return jsonify({'error': str(e), 'fixtures': []}), 500
 
+@app.route('/api/leagues', methods=['GET'])
+def leagues():
+    """
+    Return cached leagues from SportMonks. 24-hour cache TTL.
+    """
+    try:
+        data = sm_proxy.get_leagues()
+        return jsonify(data)
+    except Exception as e:
+        print(f"❌ Error in /api/leagues: {e}")
+        return jsonify({'error': str(e), 'leagues': []}), 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port, debug=True)

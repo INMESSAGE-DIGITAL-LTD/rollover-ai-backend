@@ -216,6 +216,68 @@ class SportMonksProxy:
             print(f"⚠️ Fixtures fetch error for {date_str}: {e}")
             return {'fixtures': [], 'count': 0, 'date': date_str, 'error': str(e)}
 
+    # ── Leagues (cached 24 hours) ──
+
+    def get_leagues(self):
+        cached = self.get_cache('leagues', ttl=86400)  # 24 hours
+        if cached is not None:
+            return cached
+        return self._fetch_leagues()
+
+    def _fetch_leagues(self):
+        """Fetch all leagues from SportMonks with country info."""
+        try:
+            url = (
+                f"{SPORTMONKS_BASE}/leagues"
+                f"?api_token={SPORTMONKS_TOKEN}"
+                f"&include=country"
+                f"&per_page=50"
+            )
+            req = urllib.request.Request(url)
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                body = json.loads(resp.read().decode())
+
+            leagues = []
+            for lg in body.get('data', []):
+                leagues.append({
+                    'id': lg.get('id'),
+                    'name': lg.get('name', ''),
+                    'logo': lg.get('image_path', ''),
+                    'country': (lg.get('country') or {}).get('name', ''),
+                    'country_logo': (lg.get('country') or {}).get('image_path', ''),
+                    'active': lg.get('active', True),
+                })
+
+            # Page 2 if needed
+            pagination = body.get('pagination', {})
+            if pagination.get('has_more'):
+                url2 = url + '&page=2'
+                req2 = urllib.request.Request(url2)
+                with urllib.request.urlopen(req2, timeout=20) as resp2:
+                    body2 = json.loads(resp2.read().decode())
+                for lg in body2.get('data', []):
+                    leagues.append({
+                        'id': lg.get('id'),
+                        'name': lg.get('name', ''),
+                        'logo': lg.get('image_path', ''),
+                        'country': (lg.get('country') or {}).get('name', ''),
+                        'country_logo': (lg.get('country') or {}).get('image_path', ''),
+                        'active': lg.get('active', True),
+                    })
+
+            result = {
+                'leagues': leagues,
+                'count': len(leagues),
+                'cached_at': time.time(),
+            }
+            self.set_cache('leagues', result)
+            print(f"✅ Leagues cached: {len(leagues)}")
+            return result
+
+        except Exception as e:
+            print(f"⚠️ Leagues fetch error: {e}")
+            return {'leagues': [], 'count': 0, 'error': str(e)}
+
     # ── Background polling thread ──
 
     def _start_polling(self):
