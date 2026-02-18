@@ -8,10 +8,15 @@ from models.multi_market_predictor import MultiMarketPredictor
 from utils.team_stats import TeamStatsCalculator
 from utils.sportmonks_stats import fetch_team_stats, fetch_h2h, clear_cache
 from utils.fixture_fetcher import fetch_todays_fixtures, build_daily_slip, build_parlay_slip
+from history import register_history_routes, init_history_db, save_daily_picks
 import os
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter app
+
+# Initialize pick history database
+init_history_db()
+register_history_routes(app)
 
 # Load trained models
 print("🔄 Loading trained models...")
@@ -221,6 +226,34 @@ def today_predictions():
         
         print(f"✅ Slip ready: {result['slip']['match_count']} matches, "
               f"odds {result['slip']['combined_odds']}")
+        
+        # Auto-save slip to history for cloud sync
+        slip_matches = result.get('slip', {}).get('matches', [])
+        if slip_matches:
+            try:
+                date_str = result.get('date', __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d'))
+                picks_for_history = [
+                    {
+                        "home_team": m.get("home_team", ""),
+                        "away_team": m.get("away_team", ""),
+                        "market": m.get("market", ""),
+                        "odds": m.get("odds", 0),
+                        "confidence": m.get("ai_probability", 0) * 100,
+                        "result": "pending",
+                        "league": m.get("league", ""),
+                        "home_logo": m.get("home_logo"),
+                        "away_logo": m.get("away_logo"),
+                        "league_logo": m.get("league_logo"),
+                        "home_short_code": m.get("home_short_code"),
+                        "away_short_code": m.get("away_short_code"),
+                        "kickoff": m.get("kickoff"),
+                    }
+                    for m in slip_matches
+                ]
+                save_daily_picks(date_str, picks_for_history)
+                print(f"💾 Saved {len(picks_for_history)} picks to history for {date_str}")
+            except Exception as he:
+                print(f"⚠️ History save failed (non-fatal): {he}")
         
         return jsonify(result)
         
