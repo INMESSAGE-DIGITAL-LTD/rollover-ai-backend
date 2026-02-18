@@ -113,10 +113,19 @@ def fetch_todays_fixtures():
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     return fetch_fixtures_by_date(today)
 
-
 def fetch_fixtures_by_date(date_str):
-    """Fetch fixtures for a given date with odds from SportMonks API."""
+    """Fetch fixtures for a given date with odds from SportMonks API.
+    Falls back to football-data.org for UEFA competitions when SportMonks returns 0."""
     fixtures = _fetch_fixtures_for_date(date_str)
+
+    # Fallback: if SportMonks has no fixtures, try football-data.org for UEFA
+    if not fixtures:
+        try:
+            from utils.football_data_fallback import fetch_fallback_fixtures
+            fixtures = fetch_fallback_fixtures(date_str)
+        except Exception as e:
+            print(f"⚠️ Fallback import/fetch error: {e}")
+
     fixtures.sort(key=lambda f: f.get('commence_time', ''))
     print(f"✅ Fetched {len(fixtures)} fixtures for {date_str}")
     return fixtures
@@ -843,4 +852,7 @@ def _slip_confidence(matches):
 
 
 def _league_name(league_id):
-    return LEAGUE_IDS.get(league_id, f'League {league_id}')
+    if league_id in LEAGUE_IDS:
+        return LEAGUE_IDS[league_id]
+    # Negative IDs = football-data.org fallback (name set in fixture dict)
+    return f'League {league_id}'
