@@ -7,7 +7,7 @@ from flask_cors import CORS
 from models.multi_market_predictor import MultiMarketPredictor
 from utils.team_stats import TeamStatsCalculator
 from utils.sportmonks_stats import fetch_team_stats, fetch_h2h, clear_cache
-from utils.fixture_fetcher import fetch_todays_fixtures, build_daily_slip, build_parlay_slip
+from utils.fixture_fetcher import fetch_todays_fixtures, fetch_fixtures_by_date, build_daily_slip, build_parlay_slip
 from utils.sportmonks_proxy import SportMonksProxy
 from history import register_history_routes, init_history_db, save_daily_picks
 import os
@@ -265,6 +265,94 @@ def today_predictions():
         
     except Exception as e:
         print(f"❌ Error in /api/today: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/picks/<date_str>', methods=['GET'])
+def picks_by_date(date_str):
+    """
+    Generate AI picks for any date (today or past).
+    Uses cached results for 1 hour to avoid re-running AI.
+    Past dates use fixture data from SportMonks.
+    """
+    from datetime import datetime as dt
+    try:
+        dt.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    try:
+        max_matches = int(request.args.get('max_matches', 4))
+        max_odds = float(request.args.get('max_odds', 2.60))
+        max_matches = min(max(max_matches, 1), 4)
+        max_odds = min(max(max_odds, 1.5), 3.0)
+
+        cache_key = f"picks_{date_str}_{max_matches}_{max_odds}"
+        cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
+        if cached is not None:
+            print(f"⚡ Serving cached /api/picks/{date_str}")
+            return jsonify(cached)
+
+        today = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d')
+        if date_str == today:
+            # Redirect to today logic
+            fixtures = fetch_todays_fixtures()
+        else:
+            fixtures = fetch_fixtures_by_date(date_str)
+
+        if not fixtures:
+            return jsonify({
+                'date': date_str,
+                'total_fixtures_analyzed': 0,
+                'slip': {
+                    'matches': [],
+                    'match_count': 0,
+                    'combined_odds': 0,
+                    'slip_confidence': 'NONE',
+                },
+            })
+
+        print(f"🧠 Running predictions for {date_str} on {len(fixtures)} fixtures...")
+        clear_cache()
+        result = build_daily_slip(
+            fixtures, predictor, stats_calculator,
+            max_matches=max_matches,
+            max_odds=max_odds,
+            sm_stats=sm_stats,
+        )
+        result['date'] = date_str
+
+        # Save to history
+        slip_matches = result.get('slip', {}).get('matches', [])
+        if slip_matches:
+            try:
+                picks_for_history = [
+                    {
+                        "home_team": m.get("home_team", ""),
+                        "away_team": m.get("away_team", ""),
+                        "market": m.get("market", ""),
+                        "odds": m.get("odds", 0),
+                        "confidence": m.get("ai_probability", 0),
+                        "result": "pending",
+                        "league": m.get("league", ""),
+                        "home_logo": m.get("home_logo"),
+                        "away_logo": m.get("away_logo"),
+                        "league_logo": m.get("league_logo"),
+                        "home_short_code": m.get("home_short_code"),
+                        "away_short_code": m.get("away_short_code"),
+                        "kickoff": m.get("kickoff"),
+                    }
+                    for m in slip_matches
+                ]
+                save_daily_picks(date_str, picks_for_history)
+            except Exception as he:
+                print(f"⚠️ History save failed: {he}")
+
+        sm_proxy.set_cache(cache_key, result)
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"❌ Error in /api/picks/{date_str}: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/parlay', methods=['GET'])

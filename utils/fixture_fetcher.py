@@ -111,13 +111,14 @@ AI_MARKET_FALLBACK = {
 def fetch_todays_fixtures():
     """Fetch today's fixtures with over/under odds from SportMonks API."""
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    return fetch_fixtures_by_date(today)
 
-    fixtures = _fetch_fixtures_for_date(today)
 
-    # Sort by kickoff time
+def fetch_fixtures_by_date(date_str):
+    """Fetch fixtures for a given date with odds from SportMonks API."""
+    fixtures = _fetch_fixtures_for_date(date_str)
     fixtures.sort(key=lambda f: f.get('commence_time', ''))
-
-    print(f"✅ Fetched {len(fixtures)} fixtures for {today}")
+    print(f"✅ Fetched {len(fixtures)} fixtures for {date_str}")
     return fixtures
 
 
