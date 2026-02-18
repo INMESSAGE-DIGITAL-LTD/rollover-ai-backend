@@ -1,20 +1,35 @@
 """
 Download historical match data from Football-Data.co.uk
+Covers all major leagues matching our SportMonks plan for maximum training coverage.
 """
 import requests
 import pandas as pd
 from pathlib import Path
 
-# Seasons to download (last 3 seasons)
-SEASONS = ['2223', '2324', '2425']
+# Seasons to download (last 3 full + current)
+SEASONS = ['2122', '2223', '2324', '2425']
 
-# Leagues
+# Leagues — aligned with SportMonks plan leagues for consistent prediction quality
 LEAGUES = {
+    # Tier 1 (high data quality, most matches)
     'E0': 'Premier League',
+    'E1': 'Championship',
     'SP1': 'La Liga',
+    'SP2': 'La Liga 2',
     'D1': 'Bundesliga',
     'I1': 'Serie A',
-    'F1': 'Ligue 1'
+    'I2': 'Serie B',
+    'F1': 'Ligue 1',
+    # Tier 2 (good data, in SportMonks plan)
+    'N1': 'Eredivisie',
+    'B1': 'Pro League',
+    'P1': 'Liga Portugal',
+    'T1': 'Super Lig',
+    'SC0': 'Scottish Premiership',
+    'G1': 'Super League Greece',
+    # Tier 3 (extra coverage)
+    'D2': 'Bundesliga 2',
+    'F2': 'Ligue 2',
 }
 
 def download_data():

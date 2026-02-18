@@ -69,8 +69,8 @@ LEAGUE_FILTER = ','.join(str(lid) for lid in LEAGUE_IDS)
 LINE_TO_AI_MARKET = {
     0.5: 'fh_over_05',   # Over 0.5 → First Half Over 0.5 (closest model)
     1.5: 'ft_over_15',   # Over 1.5 → Full Time Over 1.5
-    2.5: 'ft_over_15',   # Over 2.5 → Full Time Over 1.5 (best proxy)
-    3.5: 'ft_over_15',   # Over 3.5 → Full Time Over 1.5
+    2.5: 'ft_over_25',   # Over 2.5 → dedicated model if available, fallback ft_over_15
+    3.5: 'ft_over_25',   # Over 3.5 → ft_over_25 proxy
 }
 
 LINE_LABELS = {
@@ -80,7 +80,7 @@ LINE_LABELS = {
     3.5: 'Over 3.5 Goals',
 }
 
-# AI model mapping for new markets
+# AI model mapping — uses dedicated models when retrained, falls back to proxies
 AI_MARKET_MAP = {
     'home_to_score_yes': 'home_over_05',
     'away_to_score_yes': 'away_over_05',
@@ -88,12 +88,23 @@ AI_MARKET_MAP = {
     'sh_over_05': 'sh_over_05',
     'home_over_05': 'home_over_05',
     'away_over_05': 'away_over_05',
+    'btts_yes': 'btts_yes',
+    'home_win': 'home_win',
+    'away_win': 'away_win',
+    'double_chance_home_draw': 'dc_home_draw',
+    'double_chance_away_draw': 'dc_away_draw',
+    'double_chance_home_away': 'dc_home_away',
+}
+
+# Fallback mapping when expanded models aren't trained yet
+AI_MARKET_FALLBACK = {
     'btts_yes': 'ft_over_15',
     'home_win': 'home_over_15',
     'away_win': 'away_over_15',
-    'double_chance_home_draw': 'home_over_05',
-    'double_chance_away_draw': 'away_over_05',
-    'double_chance_home_away': 'ft_over_15',
+    'dc_home_draw': 'home_over_05',
+    'dc_away_draw': 'away_over_05',
+    'dc_home_away': 'ft_over_15',
+    'ft_over_25': 'ft_over_15',
 }
 
 
@@ -441,7 +452,11 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         def _try_add(market_label, odds, ai_market_key, line=None, source='api'):
             if not passes_odds_safety(market_label, odds):
                 return
-            raw_ai_prob = float(ai_pred.get(ai_market_key, 0.5))
+            # Use dedicated model if available, fall back to proxy
+            actual_key = ai_market_key
+            if actual_key not in ai_pred:
+                actual_key = AI_MARKET_FALLBACK.get(ai_market_key, ai_market_key)
+            raw_ai_prob = float(ai_pred.get(actual_key, 0.5))
             qual = qualify_and_score(
                 market_label, odds, raw_ai_prob,
                 home_live, away_live, h2h_data,
@@ -525,8 +540,13 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
 
 def _build_features_from_live(home_stats, away_stats, over15_odds=1.5, under15_odds=2.5):
-    """Build the 18-feature dict the XGBoost models expect, using live SportMonks stats."""
-    return {
+    """Build feature dict for XGBoost models, using live SportMonks stats.
+    Provides both original 18 features and extended features when available."""
+    home_attack = home_stats['avg_goals_scored'] / max(away_stats['avg_goals_conceded'], 0.3)
+    away_attack = away_stats['avg_goals_scored'] / max(home_stats['avg_goals_conceded'], 0.3)
+    
+    features = {
+        # Original 18 features
         'home_goals_per_game': home_stats['avg_goals_scored'],
         'home_goals_conceded_per_game': home_stats['avg_goals_conceded'],
         'home_over15_rate': home_stats['over15_rate'],
@@ -545,7 +565,24 @@ def _build_features_from_live(home_stats, away_stats, over15_odds=1.5, under15_o
         'defensive_strength': home_stats['home_avg_conceded'] + away_stats['away_avg_conceded'],
         'over15_odds': over15_odds,
         'under15_odds': under15_odds,
+        # Extended features (used by retrained models)
+        'home_btts_rate': home_stats.get('btts_rate', 0.55),
+        'away_btts_rate': away_stats.get('btts_rate', 0.55),
+        'home_clean_sheet_rate': home_stats.get('clean_sheet_rate', 0.30),
+        'away_clean_sheet_rate': away_stats.get('clean_sheet_rate', 0.25),
+        'home_attack_strength': home_attack,
+        'away_attack_strength': away_attack,
+        'attack_vs_defense_ratio': home_attack / max(away_attack, 0.3),
+        'home_momentum': 0.0,  # Not available from live stats
+        'away_momentum': 0.0,
+        'home_goals_std': 0.5,  # Default variance
+        'away_goals_std': 0.5,
+        'home_over25_rate': home_stats.get('over25_rate', 0.45),
+        'away_over25_rate': away_stats.get('over25_rate', 0.40),
+        'home_scored_in_rate': home_stats.get('scored_in_rate', 0.78),
+        'away_scored_in_rate': away_stats.get('scored_in_rate', 0.70),
     }
+    return features
 
 
 def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_odds=2.60, sm_stats=None):

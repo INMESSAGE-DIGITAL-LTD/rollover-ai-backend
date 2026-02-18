@@ -74,16 +74,22 @@ def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h):
 
     edge = adjusted_prob - implied_prob
 
-    # Edge gate: relaxed thresholds per market safety level
+    # Edge gate: calibrated thresholds per market risk level
     lab = market_label.lower()
-    if 'double chance' in lab or 'or' in lab or 'home or' in lab or 'draw or' in lab:
-        min_edge = 0.02 if has_stats else 0.01  # DC is inherently safe
+    if 'double chance' in lab or 'home or' in lab or 'draw or' in lab:
+        min_edge = 0.02 if has_stats else 0.01
     elif 'over 0.5' in lab:
-        min_edge = 0.02 if has_stats else 0.01  # Very high base rate
-    elif 'over 1.5' in lab or 'over 2.5' in lab:
-        min_edge = 0.02 if has_stats else 0.02  # Core markets — keep accessible
+        min_edge = 0.02 if has_stats else 0.01
+    elif 'over 1.5' in lab:
+        min_edge = 0.03 if has_stats else 0.02
+    elif 'over 2.5' in lab:
+        min_edge = 0.04 if has_stats else 0.03  # Higher bar for riskier market
+    elif 'btts' in lab or 'both teams' in lab:
+        min_edge = 0.04 if has_stats else 0.03
+    elif lab in ('home win', 'away win'):
+        min_edge = 0.05 if has_stats else 0.04  # Result markets need higher edge
     else:
-        min_edge = 0.03 if has_stats else 0.02  # Standard markets
+        min_edge = 0.03 if has_stats else 0.02
 
     if edge < min_edge:
         return None

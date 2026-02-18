@@ -1,5 +1,7 @@
 """
-Train all 14 market prediction models with PROPER pre-match features
+Train all market prediction models with enhanced features and regularization.
+Supports expanded markets (BTTS, result, double chance, over 2.5).
+Uses time-based split to avoid data leakage.
 """
 import sys
 sys.path.append('..')
@@ -7,35 +9,24 @@ sys.path.append('..')
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from sklearn.model_selection import train_test_split
 from models.multi_market_predictor import MultiMarketPredictor
 from utils.label_generator import generate_all_labels
 from utils.feature_calculator import prepare_dataset
 
 def prepare_labels(matches):
-    """
-    Generate labels for all 14 markets
-    """
-    print("🔄 Generating labels for 14 markets...")
+    """Generate labels for all markets including expanded ones."""
+    print("🔄 Generating labels for all markets...")
     
-    all_labels = {market: [] for market in [
-        'ft_over_15', 'ft_under_15',
-        'home_over_15', 'home_under_15',
-        'away_over_15', 'away_under_15',
-        'ht_over_15', 'ht_under_15',
-        'fh_over_05', 'fh_under_05',
-        'sh_over_05', 'sh_under_05',
-        'home_over_05', 'away_over_05',
-    ]}
+    sample_labels = generate_all_labels(matches[0])
+    all_labels = {market: [] for market in sample_labels.keys()}
     
     for match in matches:
         labels = generate_all_labels(match)
         for market, label in labels.items():
             all_labels[market].append(label)
     
-    print(f"✅ Labels generated")
+    print(f"✅ {len(all_labels)} markets generated")
     
-    # Print distribution
     print("\n📊 Label Distribution:")
     for market, labels in all_labels.items():
         pos_rate = sum(labels) / len(labels) * 100
@@ -44,8 +35,8 @@ def prepare_labels(matches):
     return all_labels
 
 def main():
-    print("🚀 Starting PROPER Model Training")
-    print("   (Using only PRE-MATCH features)")
+    print("🚀 Enhanced Model Training")
+    print("   (Expanded features + markets + regularization)")
     print("=" * 60)
     
     # Load data
@@ -54,17 +45,22 @@ def main():
     df = pd.read_csv(data_file, low_memory=False)
     print(f"✅ Loaded {len(df)} matches")
     
-    # Prepare features (pre-match only!)
-    print("\n2️⃣ Calculating pre-match features...")
+    if 'League' in df.columns:
+        print(f"   Leagues: {df['League'].nunique()}")
+        for league, count in df['League'].value_counts().items():
+            print(f"   - {league}: {count}")
+    
+    # Prepare features
+    print("\n2️⃣ Calculating enhanced pre-match features...")
     X, match_rows = prepare_dataset(df)
-    print(f"✅ {len(X)} matches with complete feature history")
+    print(f"✅ {len(X)} matches with {X.shape[1]} features")
     
     # Generate labels
     print("\n3️⃣ Generating labels...")
     y_labels = prepare_labels(match_rows)
     
-    # Split data
-    print("\n4️⃣ Splitting train/test (80/20)...")
+    # Time-based split (80/20) — preserves temporal order
+    print("\n4️⃣ Time-based split (80/20)...")
     split_idx = int(len(X) * 0.8)
     
     X_train = X[:split_idx].reset_index(drop=True)
@@ -79,16 +75,16 @@ def main():
         y_test_labels[market] = labels_array[split_idx:]
     
     print(f"✅ Train: {len(X_train)} matches")
-    print(f"✅ Test: {len(X_test)} matches")
+    print(f"✅ Test:  {len(X_test)} matches")
     
     # Train models
-    print("\n5️⃣ Training 14 XGBoost models...")
+    print("\n5️⃣ Training XGBoost models (regularized)...")
     print("=" * 60)
     
     predictor = MultiMarketPredictor()
     results = predictor.train_all_markets(X_train, y_train_labels, X_test, y_test_labels)
     
-    # Print results
+    # Results
     print("\n" + "=" * 60)
     print("📊 TRAINING RESULTS")
     print("=" * 60)
@@ -101,29 +97,33 @@ def main():
         test_acc = metrics['test_accuracy'] * 100
         total_train_acc += train_acc
         total_test_acc += test_acc
-        print(f"{market:20} → Train: {train_acc:.1f}%  Test: {test_acc:.1f}%")
+        gap = train_acc - test_acc
+        flag = " ⚠️" if gap > 10 else ""
+        print(f"{market:20} → Train: {train_acc:.1f}%  Test: {test_acc:.1f}%  Gap: {gap:.1f}%{flag}")
     
-    avg_train = total_train_acc / 14
-    avg_test = total_test_acc / 14
+    n_markets = len(results)
+    avg_train = total_train_acc / n_markets
+    avg_test = total_test_acc / n_markets
     
     print("=" * 60)
-    print(f"AVERAGE ACCURACY → Train: {avg_train:.1f}%  Test: {avg_test:.1f}%")
+    print(f"AVERAGE → Train: {avg_train:.1f}%  Test: {avg_test:.1f}%  Gap: {avg_train - avg_test:.1f}%")
+    print(f"MARKETS: {n_markets}  FEATURES: {X.shape[1]}")
     print("=" * 60)
     
     # Save models
     print("\n6️⃣ Saving models...")
     predictor.save_models('../models/trained')
     
-    print("\n✅ TRAINING COMPLETE!")
-    print(f"✅ 14 models saved to: models/trained/")
+    print(f"\n✅ TRAINING COMPLETE!")
+    print(f"✅ {n_markets} models saved to: models/trained/")
     print(f"✅ Average test accuracy: {avg_test:.1f}%")
     
     if avg_test >= 65:
         print("🎉 EXCELLENT! Models are production-ready!")
     elif avg_test >= 55:
-        print("✅ GOOD! Models need some tuning but usable")
+        print("✅ GOOD! Models are usable for hybrid engine")
     else:
-        print("⚠️ Need more training data or better features")
+        print("⚠️ Consider adding more training data")
 
 if __name__ == '__main__':
     main()
