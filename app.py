@@ -8,11 +8,15 @@ from models.multi_market_predictor import MultiMarketPredictor
 from utils.team_stats import TeamStatsCalculator
 from utils.sportmonks_stats import fetch_team_stats, fetch_h2h, clear_cache
 from utils.fixture_fetcher import fetch_todays_fixtures, build_daily_slip, build_parlay_slip
+from utils.sportmonks_proxy import SportMonksProxy
 from history import register_history_routes, init_history_db, save_daily_picks
 import os
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter app
+
+# Initialize SportMonks proxy with caching + background polling
+sm_proxy = SportMonksProxy()
 
 # Initialize pick history database
 init_history_db()
@@ -172,22 +176,22 @@ def test_prediction():
 def today_predictions():
     """
     Fetch today's real fixtures, run AI predictions, and return a smart slip.
-    
-    GET /api/today
-    Optional query params:
-        max_matches: int (1-4, default 4)
-        max_odds: float (default 2.60)
-    
-    Returns:
-        - Daily slip (2-4 best matches, combined odds 1.80–2.60)
-        - All analyzed fixtures with AI probabilities
+    Results are cached for 5 minutes to avoid re-running AI for every request.
     """
+    import time as _time
     try:
         max_matches = int(request.args.get('max_matches', 4))
         max_odds = float(request.args.get('max_odds', 2.60))
         
         max_matches = min(max(max_matches, 1), 4)
         max_odds = min(max(max_odds, 1.5), 3.0)
+
+        # Check cache (keyed by params)
+        cache_key = f"today_{max_matches}_{max_odds}"
+        cached = sm_proxy.get_cache(cache_key, ttl=300)  # 5 min
+        if cached is not None:
+            print(f"⚡ Serving cached /api/today ({cache_key})")
+            return jsonify(cached)
         
         print(f"🔄 Fetching today's fixtures...")
         fixtures = fetch_todays_fixtures()
@@ -207,7 +211,6 @@ def today_predictions():
             })
         
         print(f"🧠 Running hybrid predictions on {len(fixtures)} fixtures...")
-        # Clear SportMonks cache at start of each request
         clear_cache()
         result = build_daily_slip(
             fixtures, predictor, stats_calculator,
@@ -254,6 +257,9 @@ def today_predictions():
                 print(f"💾 Saved {len(picks_for_history)} picks to history for {date_str}")
             except Exception as he:
                 print(f"⚠️ History save failed (non-fatal): {he}")
+        
+        # Cache the result
+        sm_proxy.set_cache(cache_key, result)
         
         return jsonify(result)
         
@@ -320,6 +326,34 @@ def list_teams():
     """List all teams in the database"""
     teams = stats_calculator.get_all_teams()
     return jsonify({'teams': teams, 'count': len(teams)})
+
+# ── SportMonks Proxy Endpoints (cached, token stays server-side) ──
+
+@app.route('/api/livescores', methods=['GET'])
+def livescores():
+    """
+    Return cached live scores. Backend polls SportMonks every 2 min.
+    Clients call this instead of SportMonks directly.
+    """
+    try:
+        data = sm_proxy.get_livescores()
+        return jsonify(data)
+    except Exception as e:
+        print(f"❌ Error in /api/livescores: {e}")
+        return jsonify({'error': str(e), 'fixtures': []}), 500
+
+@app.route('/api/fixtures/<date_str>', methods=['GET'])
+def fixtures_by_date(date_str):
+    """
+    Return cached fixtures for a date. 10-min cache TTL.
+    Clients call this instead of SportMonks directly.
+    """
+    try:
+        data = sm_proxy.get_fixtures(date_str)
+        return jsonify(data)
+    except Exception as e:
+        print(f"❌ Error in /api/fixtures/{date_str}: {e}")
+        return jsonify({'error': str(e), 'fixtures': []}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
