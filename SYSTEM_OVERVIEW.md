@@ -164,7 +164,7 @@
 - **The Odds API**: Live odds (500 free/month)
 
 ### Deployment
-- **Railway/Render**: Free hosting
+- **Render**: Free hosting
 - **GitHub**: Code repository
 
 ### Frontend (Flutter)
@@ -204,7 +204,7 @@
 1. ✅ Download 10,000+ historical matches
 2. ✅ Train all 14 models
 3. ✅ Test API locally
-4. ✅ Deploy to Railway
+4. ✅ Deploy to Render
 5. ✅ Connect Flutter app
 6. ✅ Go live!
 

@@ -78,7 +78,7 @@ curl http://localhost:5001/api/predictions/test
 
 4. **Deploy to Production**
    - Push to GitHub
-   - Deploy to Railway/Render (FREE)
+   - Deploy to Render (FREE)
    - Update Flutter app with live URL
 
 ---

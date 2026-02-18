@@ -234,7 +234,7 @@ For each historical match, we create 14 binary labels:
 4. **Train all 14 models**
 5. **Integrate with The Odds API** (fetch today's matches)
 6. **Build slip optimization algorithm**
-7. **Deploy to Railway/Render**
+7. **Deploy to Render**
 8. **Connect to Flutter app**
 
 ---
@@ -244,7 +244,7 @@ For each historical match, we create 14 binary labels:
 - Historical Data: **FREE** (Football-Data.co.uk)
 - Training: **FREE** (local computer)
 - The Odds API: **FREE** (500 requests/month)
-- Hosting: **FREE** (Railway/Render free tier)
+- Hosting: **FREE** (Render free tier)
 
 **Total: $0/month** ✅
 
