@@ -42,8 +42,6 @@ class SportMonksProxy:
         self._lock = threading.Lock()
         self._polling = False
         self._poll_thread = None
-        # Start background livescore polling
-        self._start_polling()
 
     # ── Generic cache helpers ──
 
@@ -61,6 +59,9 @@ class SportMonksProxy:
     # ── Live scores (background-polled every 2 min) ──
 
     def get_livescores(self):
+        # Lazily start background polling on first call
+        if not self._polling:
+            self._start_polling()
         cached = self.get_cache('livescores', ttl=150)  # 2.5 min grace
         if cached is not None:
             return cached

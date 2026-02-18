@@ -48,7 +48,7 @@ print("✅ SportMonks live stats module ready!")
 def home():
     return jsonify({
         "service": "Rollover AI Prediction API",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "status": "running",
         "models_loaded": len(predictor.models),
         "engine": "hybrid (SportMonks + XGBoost + Statistical Qualification)",
