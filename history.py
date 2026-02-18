@@ -189,7 +189,7 @@ def register_history_routes(app):
                     "away_team": m.get("away_team", ""),
                     "market": m.get("market", ""),
                     "odds": m.get("odds", 0),
-                    "confidence": m.get("ai_probability", 0) * 100,
+                    "confidence": m.get("ai_probability", 0),
                     "result": "pending",
                     "league": m.get("league", ""),
                     "home_logo": m.get("home_logo"),
