@@ -39,15 +39,15 @@ print("✅ SportMonks live stats module ready!")
 def home():
     return jsonify({
         "service": "Rollover AI Prediction API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "status": "running",
-        "models_loaded": 14,
+        "models_loaded": len(predictor.models),
         "engine": "hybrid (SportMonks + XGBoost + Statistical Qualification)",
     })
 
 @app.route('/health')
 def health():
-    return jsonify({"status": "healthy", "models": 14})
+    return jsonify({"status": "healthy", "models": len(predictor.models)})
 
 @app.route('/api/predict', methods=['POST'])
 def predict():
@@ -212,9 +212,10 @@ def today_predictions():
         )
         
         result['ai_model'] = {
-            'version': '2.0.0',
+            'version': '2.1.0',
             'engine': 'hybrid',
-            'markets_analyzed': 14,
+            'markets_analyzed': len(predictor.models),
+            'features': len(predictor.feature_names),
             'teams_in_database': len(stats_calculator.get_all_teams()),
         }
         
