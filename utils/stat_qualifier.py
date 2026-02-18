@@ -55,9 +55,12 @@ def is_in_sweet_spot(market_label, odds):
     return rule[0] <= odds <= rule[1]
 
 
-def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h):
+def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h, standings=None):
     """
     Run statistical qualification + edge calculation for a single pick.
+
+    Args:
+        standings: dict with 'home' and 'away' team standing info (optional).
 
     Returns:
         dict with 'edge', 'ai_prob', 'stability', 'composite_score', 'qualified'
@@ -71,6 +74,11 @@ def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h):
         market_label, ai_prob, implied_prob,
         home_stats, away_stats, h2h,
     )
+
+    # Apply standings-based adjustment
+    if standings:
+        adjusted_prob = _apply_standings_adjustment(
+            market_label, adjusted_prob, standings)
 
     edge = adjusted_prob - implied_prob
 
@@ -321,3 +329,122 @@ def _compute_stability(market_label, home, away):
         return 0.65  # DC is inherently more stable
 
     return 0.50
+
+
+# ═══════════════════════════════════════════════════════════
+# Standings-Aware Adjustments
+# ═══════════════════════════════════════════════════════════
+
+def _apply_standings_adjustment(market_label, prob, standings):
+    """
+    Adjust probability based on league table position and motivation.
+
+    Key insights:
+    - Title contenders playing relegation teams: draws happen more than expected
+      (pressure on top team + desperation defense from bottom team)
+    - Home team fighting for title: Home Win gets a boost
+    - Relegation team at home: they fight harder → upset risk increases
+    - DC(12) in title vs relegation: penalty because draw risk is real
+    - Over 1.5 goals in high-stakes games: slight boost (both teams motivated)
+    """
+    home_s = standings.get('home')
+    away_s = standings.get('away')
+    if not home_s or not away_s:
+        return prob
+
+    lab = market_label.lower()
+    home_pos = home_s.get('position', 10)
+    away_pos = away_s.get('position', 10)
+    total = home_s.get('total_teams', 20)
+    home_title = home_s.get('title_race', False)
+    away_title = away_s.get('title_race', False)
+    home_releg = home_s.get('relegation_battle', False)
+    away_releg = away_s.get('relegation_battle', False)
+    home_leader = home_s.get('is_leader', False)
+    away_leader = away_s.get('is_leader', False)
+    home_gap = home_s.get('gap_to_second', 99)
+
+    # Position gap: large gap = mismatch (top vs bottom)
+    pos_gap = abs(home_pos - away_pos)
+    is_mismatch = pos_gap >= total * 0.5  # e.g. 1st vs 15th in 20-team league
+
+    # ── Double Chance (12) — only draw loses ──
+    if 'double chance' in lab and '12' in lab:
+        # Title team vs relegation team: draw risk is HIGHER than stats suggest
+        # Top teams under pressure drop points to low-block defenses
+        if is_mismatch and (home_title or away_title):
+            # Wolves vs Arsenal scenario: Arsenal at the top, Wolves near bottom
+            # The bottom team parks the bus → draw risk ~15-20% even if DC(12) seems safe
+            prob *= 0.94  # 6% penalty — nudges model toward safer markets
+        if home_releg and away_title:
+            # Relegation team at home vs title contender: desperate defense
+            prob *= 0.93
+        if away_releg and home_title:
+            prob *= 0.95  # Slightly less risky when top team is at home
+        return min(0.96, prob)
+
+    # ── Double Chance (1X) — home win or draw ──
+    if ('1x' in lab or 'home or draw' in lab):
+        if home_title or home_leader:
+            prob = min(0.95, prob * 1.03)  # Title team at home rarely loses
+        if home_releg and away_title:
+            prob = min(0.93, prob * 1.02)  # Relegation fight at home → they won't lose easily
+        return prob
+
+    # ── Double Chance (X2) — away win or draw ──
+    if ('x2' in lab or 'draw or away' in lab):
+        if away_title or away_leader:
+            prob = min(0.95, prob * 1.03)  # Title contender away rarely loses outright
+        return prob
+
+    # ── Home Win ──
+    if lab == 'home win':
+        if home_title and away_releg:
+            # Title team at home vs relegation: strong motivation boost
+            prob = min(0.93, prob * 1.06)
+        elif home_leader and home_gap <= 3:
+            # Leader with small gap: MUST win at home
+            prob = min(0.93, prob * 1.05)
+        elif home_releg:
+            # Relegation team at home: fights harder
+            prob = min(0.90, prob * 1.03)
+        return prob
+
+    # ── Away Win ──
+    if lab == 'away win':
+        if away_title and home_releg:
+            # Strong away team vs weak home team, but relegation teams fight at home
+            prob *= 0.97  # Small penalty — upsets happen
+        elif away_leader and away_s.get('gap_to_second', 99) <= 3:
+            # Leader away, tight race: motivated
+            prob = min(0.90, prob * 1.04)
+        return prob
+
+    # ── Over 1.5 Goals ──
+    if 'over 1.5' in lab:
+        if is_mismatch and (home_title or away_title):
+            # High-stakes games between mismatched teams usually produce goals
+            # Top team attacks, bottom team gets chances on counter
+            prob = min(0.95, prob * 1.03)
+        return prob
+
+    # ── Over 2.5 Goals ──
+    if 'over 2.5' in lab:
+        if is_mismatch and (home_title or away_title):
+            prob = min(0.93, prob * 1.02)
+        # Relegation vs relegation: tight, defensive
+        if home_releg and away_releg:
+            prob *= 0.96
+        return prob
+
+    # ── Home/Away to Score ──
+    if 'home to score' in lab or 'home over 0.5' in lab:
+        if home_title:
+            prob = min(0.95, prob * 1.02)
+        return prob
+    if 'away to score' in lab or 'away over 0.5' in lab:
+        if away_title:
+            prob = min(0.95, prob * 1.02)
+        return prob
+
+    return prob

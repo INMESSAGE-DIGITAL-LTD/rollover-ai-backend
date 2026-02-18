@@ -266,8 +266,107 @@ def _compute_h2h(team1_id, team2_id, fixtures):
     }
 
 
+_standings_cache = {}  # season_id -> standings list
+
+
+def fetch_standings_for_season(season_id):
+    """Fetch league standings for a season. Returns list of team standings."""
+    if season_id in _standings_cache:
+        return _standings_cache[season_id]
+
+    url = (
+        f"{SPORTMONKS_BASE}/standings/seasons/{season_id}"
+        f"?api_token={SPORTMONKS_TOKEN}"
+    )
+
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read().decode())
+
+        data = body.get('data', [])
+        standings = []
+        for group in data:
+            for entry in group.get('standings', group.get('details', [])):
+                if isinstance(entry, dict):
+                    standings.append(entry)
+            # Some API versions nest differently
+            if isinstance(group, dict) and 'participant_id' in group:
+                standings.append(group)
+
+        if standings:
+            _standings_cache[season_id] = standings
+            print(f"✅ Standings cached for season {season_id}: {len(standings)} teams")
+        return standings
+
+    except Exception as e:
+        print(f"⚠️ Standings fetch error for season {season_id}: {e}")
+        return []
+
+
+def get_team_standing(season_id, team_id):
+    """
+    Get a team's league position, points, and context.
+    Returns dict with position, points, total_teams, zone info, or None.
+    """
+    standings = fetch_standings_for_season(season_id)
+    if not standings:
+        return None
+
+    total_teams = len(standings)
+
+    for entry in standings:
+        pid = entry.get('participant_id') or entry.get('team_id')
+        if pid == team_id:
+            position = entry.get('position', entry.get('ranking', 0))
+            points = entry.get('points', 0)
+
+            # Determine zone
+            zone = 'mid'
+            if position <= 1:
+                zone = 'leader'
+            elif position <= max(2, total_teams // 6):
+                zone = 'title_race'
+            elif position <= max(4, total_teams // 3):
+                zone = 'european'
+            elif position >= total_teams - max(2, total_teams // 6):
+                zone = 'relegation'
+            elif position >= total_teams - max(4, total_teams // 3):
+                zone = 'relegation_threat'
+
+            # Check points gap to leader and to relegation
+            leader_pts = 0
+            relegation_pts = 999
+            second_pts = 0
+            for s in standings:
+                s_pos = s.get('position', s.get('ranking', 0))
+                s_pts = s.get('points', 0)
+                if s_pos == 1:
+                    leader_pts = s_pts
+                if s_pos == 2:
+                    second_pts = s_pts
+                if s_pos == total_teams - 2:
+                    relegation_pts = min(relegation_pts, s_pts)
+
+            return {
+                'position': position,
+                'points': points,
+                'total_teams': total_teams,
+                'zone': zone,
+                'gap_to_leader': leader_pts - points,
+                'gap_to_second': points - second_pts if position == 1 else second_pts - points,
+                'gap_to_relegation': points - relegation_pts,
+                'is_leader': position == 1,
+                'title_race': position <= 2 and (leader_pts - points) <= 6,
+                'relegation_battle': zone in ('relegation', 'relegation_threat'),
+            }
+
+    return None
+
+
 def clear_cache():
     """Clear in-memory caches (call at start of each day)."""
-    global _team_stats_cache, _h2h_cache
+    global _team_stats_cache, _h2h_cache, _standings_cache
     _team_stats_cache = {}
     _h2h_cache = {}
+    _standings_cache = {}

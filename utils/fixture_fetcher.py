@@ -194,6 +194,7 @@ def _parse_fixture(event):
         league_id = league_data.get('id', event.get('league_id', 0))
         league_name = _league_name(league_id)
         league_logo = league_data.get('image_path', '')
+        season_id = event.get('season_id')
 
         starting_at = event.get('starting_at', '')
 
@@ -323,6 +324,7 @@ def _parse_fixture(event):
             'away_team': away_team,
             'home_team_id': home_id,
             'away_team_id': away_id,
+            'season_id': season_id,
             'commence_time': starting_at,
             'league': league_id,
             'league_name': league_name,
@@ -391,9 +393,10 @@ def _parse_ou_market(target, label, total_str, value):
 def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None):
     """
     Generate all match options from all markets for a list of fixtures.
-    Now integrates live SportMonks stats + statistical qualification + edge calculation.
+    Now integrates live SportMonks stats + standings + statistical qualification + edge calculation.
     """
     from utils.stat_qualifier import passes_odds_safety, qualify_and_score, confidence_label
+    from utils.sportmonks_stats import get_team_standing
 
     match_options = []
 
@@ -405,9 +408,11 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         # --- Fetch live team stats from SportMonks ---
         home_id = fix.get('home_team_id')
         away_id = fix.get('away_team_id')
+        season_id = fix.get('season_id')
         home_live = None
         away_live = None
         h2h_data = None
+        standings_ctx = None
 
         if sm_stats and home_id and away_id:
             try:
@@ -416,6 +421,21 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
                 h2h_data = sm_stats.fetch_h2h(home_id, away_id)
             except Exception as e:
                 print(f"⚠️ Live stats error for {home} vs {away}: {e}")
+
+        # --- Fetch league standings for context ---
+        if season_id and home_id and away_id:
+            try:
+                home_standing = get_team_standing(season_id, home_id)
+                away_standing = get_team_standing(season_id, away_id)
+                if home_standing or away_standing:
+                    standings_ctx = {
+                        'home': home_standing,
+                        'away': away_standing,
+                    }
+                    if home_standing and away_standing:
+                        print(f"  📊 {home} #{home_standing['position']} ({home_standing['zone']}) vs {away} #{away_standing['position']} ({away_standing['zone']})")
+            except Exception as e:
+                print(f"⚠️ Standings error for {home} vs {away}: {e}")
 
         # --- Build 18-feature dict for XGBoost ---
         primary_line = next(iter(fix['lines'].values()), {})
@@ -461,6 +481,7 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             qual = qualify_and_score(
                 market_label, odds, raw_ai_prob,
                 home_live, away_live, h2h_data,
+                standings=standings_ctx,
             )
             if qual is None:
                 return
