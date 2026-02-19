@@ -374,7 +374,7 @@ def free_picks_by_date(date_str):
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
     try:
-        cache_key = f"free_picks_v2_{date_str}"
+        cache_key = f"free_picks_v3_{date_str}"
         cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
         if cached is not None:
             print(f"⚡ Serving cached /api/free-picks/{date_str}")
