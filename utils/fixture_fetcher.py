@@ -15,8 +15,13 @@ SPORTMONKS_TOKEN = os.environ.get(
 )
 SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
-# League IDs — ONLY leagues available in the SportMonks plan
+# League IDs — leagues available in the SportMonks Standard plan
 LEAGUE_IDS = {
+    # UEFA Competitions
+    2: 'Champions League',
+    5: 'Europa League',
+    2286: 'Conference League',
+    1371: 'Europa League Play-offs',
     # England
     8: 'Premier League',
     9: 'Championship',
@@ -48,6 +53,7 @@ LEAGUE_IDS = {
     462: 'Liga Portugal',
     # Other
     486: 'Premier League (Other)',
+    609: 'Premier League (Ukraine)',
     # Scotland
     501: 'Premiership',
     # Spain
