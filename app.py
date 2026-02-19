@@ -358,11 +358,16 @@ def picks_by_date(date_str):
 @app.route('/api/free-picks/<date_str>', methods=['GET'])
 def free_picks_by_date(date_str):
     """
-    Free picks endpoint — higher per-match odds (1.50-3.00), more matches (8-15).
-    Uses build_parlay_slip with relaxed safety rules (free_mode=True)
-    to create a teaser for premium subscribers.
+    Free picks endpoint — safe, low-odds daily tips.
 
-    GET /api/free-picks/2026-02-19?max_matches=12
+    Rules:
+      - 4-6 matches per day (target 6, minimum 4)
+      - Per-match odds: 1.10–1.50
+      - Combined odds: 2.00–4.00
+      - Uses premium safety rules (free_mode=False) for quality
+      - Must NOT overlap with AI Pro picks for the same date
+
+    GET /api/free-picks/2026-02-19
     """
     from datetime import datetime as dt
     try:
@@ -371,10 +376,7 @@ def free_picks_by_date(date_str):
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
     try:
-        max_matches = int(request.args.get('max_matches', 12))
-        max_matches = min(max(max_matches, 8), 15)
-
-        cache_key = f"free_picks_{date_str}_{max_matches}"
+        cache_key = f"free_picks_{date_str}"
         cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
         if cached is not None:
             print(f"⚡ Serving cached /api/free-picks/{date_str}")
@@ -398,16 +400,47 @@ def free_picks_by_date(date_str):
                 },
             })
 
+        # ── Collect AI Pro match keys to exclude overlap ──
+        exclude_matches = set()
+        for mm in [4]:
+            for mo in [2.6]:
+                pro_key = f"picks_{date_str}_{mm}_{mo}"
+                pro_cached = sm_proxy.get_cache(pro_key, ttl=7200)
+                if pro_cached:
+                    pro_matches = pro_cached.get('slip', {}).get('matches', [])
+                    for pm in pro_matches:
+                        ht = pm.get('home_team', '')
+                        at = pm.get('away_team', '')
+                        if ht and at:
+                            exclude_matches.add(f"{ht}_{at}")
+        # Also check /api/today cache
+        for mm in [4]:
+            for mo in [2.6]:
+                today_key = f"today_{mm}_{mo}"
+                today_cached = sm_proxy.get_cache(today_key, ttl=7200)
+                if today_cached:
+                    today_matches = today_cached.get('slip', {}).get('matches', [])
+                    for tm in today_matches:
+                        ht = tm.get('home_team', '')
+                        at = tm.get('away_team', '')
+                        if ht and at:
+                            exclude_matches.add(f"{ht}_{at}")
+
+        if exclude_matches:
+            print(f"🚫 Excluding {len(exclude_matches)} AI Pro matches from free picks")
+
         print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
-              f"max_matches={max_matches}, per-match odds 1.50-3.00")
+              f"target 4-6 matches, per-match odds 1.10-1.50, combined max 4.00")
         clear_cache()
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
-            num_matches=max_matches,
-            min_odds=1.50,
-            max_odds=3.00,
+            num_matches=6,
+            min_odds=1.10,
+            max_odds=1.50,
             sm_stats=sm_stats,
-            free_mode=True,
+            free_mode=False,            # premium safety rules for quality
+            exclude_matches=exclude_matches,
+            max_combined_odds=4.00,     # cap combined odds at 4.00
         )
         result['date'] = date_str
 
