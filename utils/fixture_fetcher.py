@@ -482,6 +482,11 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             'home_short_code': fix.get('home_short_code', ''),
             'away_short_code': fix.get('away_short_code', ''),
             'all_predictions': {k: round(float(v), 3) for k, v in ai_pred.items()},
+            # Match context for UI breakdown
+            'home_form': _build_form_summary(home_live, 'home') if home_live else None,
+            'away_form': _build_form_summary(away_live, 'away') if away_live else None,
+            'h2h': h2h_data,
+            'standings': standings_ctx,
         }
 
         # Helper to add a qualified option
@@ -793,7 +798,7 @@ def _format_slip_matches(matches):
     """Format slip matches for API response"""
     result = []
     for m in matches:
-        result.append({
+        entry = {
             'home_team': m['home_team'],
             'away_team': m['away_team'],
             'match': f"{m['home_team']} vs {m['away_team']}",
@@ -817,7 +822,38 @@ def _format_slip_matches(matches):
                 }
                 for k, v in m['all_predictions'].items()
             },
-        })
+        }
+
+        # Match context for breakdown UI
+        if m.get('home_form'):
+            entry['home_form'] = m['home_form']
+        if m.get('away_form'):
+            entry['away_form'] = m['away_form']
+
+        h2h = m.get('h2h')
+        if h2h:
+            entry['h2h'] = {
+                'played': h2h.get('total_matches', 0),
+                'avg_goals': round(h2h.get('avg_goals', 0), 1),
+                'btts_pct': round((h2h.get('btts_count', 0) / max(h2h.get('total_matches', 1), 1)) * 100),
+                'over25_pct': round((h2h.get('over25_count', 0) / max(h2h.get('total_matches', 1), 1)) * 100),
+            }
+
+        standings = m.get('standings')
+        if standings:
+            s = {}
+            if standings.get('home'):
+                s['home_pos'] = standings['home'].get('position')
+                s['home_pts'] = standings['home'].get('points')
+                s['home_zone'] = standings['home'].get('zone')
+            if standings.get('away'):
+                s['away_pos'] = standings['away'].get('position')
+                s['away_pts'] = standings['away'].get('points')
+                s['away_zone'] = standings['away'].get('zone')
+            if s:
+                entry['standings'] = s
+
+        result.append(entry)
     return result
 
 
@@ -862,3 +898,18 @@ def _league_name(league_id):
         return LEAGUE_IDS[league_id]
     # Negative IDs = football-data.org fallback (name set in fixture dict)
     return f'League {league_id}'
+
+
+def _build_form_summary(stats, side):
+    """Build compact form summary from team stats for UI."""
+    if not stats:
+        return None
+    return {
+        'avg_scored': round(stats.get('avg_goals_scored', 0), 1),
+        'avg_conceded': round(stats.get('avg_goals_conceded', 0), 1),
+        'scored_in_pct': round(stats.get('scored_in_rate', 0) * 100),
+        'clean_sheet_pct': round(stats.get('clean_sheet_rate', 0) * 100),
+        'over15_pct': round(stats.get('over15_rate', 0) * 100),
+        'btts_pct': round(stats.get('btts_rate', 0) * 100),
+        'matches': stats.get('matches_played', 0),
+    }
