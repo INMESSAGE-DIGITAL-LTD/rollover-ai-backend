@@ -405,7 +405,7 @@ def _parse_ou_market(target, label, total_str, value):
             target[total]['under'] = value
 
 
-def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None):
+def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None, free_mode=False):
     """
     Generate all match options from all markets for a list of fixtures.
     Now integrates live SportMonks stats + standings + statistical qualification + edge calculation.
@@ -491,7 +491,7 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
         # Helper to add a qualified option
         def _try_add(market_label, odds, ai_market_key, line=None, source='api'):
-            if not passes_odds_safety(market_label, odds):
+            if not passes_odds_safety(market_label, odds, free_mode=free_mode):
                 return
             # Use dedicated model if available, fall back to proxy
             actual_key = ai_market_key
@@ -627,14 +627,14 @@ def _build_features_from_live(home_stats, away_stats, over15_odds=1.5, under15_o
     return features
 
 
-def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_odds=2.60, sm_stats=None):
+def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_odds=2.60, sm_stats=None, free_mode=False):
     """
     Build the best daily rollover slip using hybrid architecture.
     Tries multiple market options per fixture to find ideal combined odds.
     """
     from itertools import product
 
-    match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats)
+    match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats, free_mode=free_mode)
 
     if not match_options:
         return _empty_result(fixtures)
@@ -751,14 +751,14 @@ def _empty_result(fixtures):
     }
 
 
-def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None):
+def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None, free_mode=False):
     """
     Build a higher-odds parlay from ALL markets.
     User controls number of matches (2-20).
     Each match can use any market (1X2, BTTS, Over/Under, DC, etc.)
     Select matches with highest composite score within the odds range.
     """
-    match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats)
+    match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats, free_mode=free_mode)
 
     # Filter to options within odds range
     filtered = [o for o in match_options if min_odds <= o['odds'] <= max_odds]

@@ -41,17 +41,52 @@ SAFETY_RULES = {
 # Default rule for markets not listed above
 DEFAULT_RULE = (1.10, 1.55, 1.60)
 
+# ═══════════════════════════════════════════════════════════
+# Free-mode Safety Rules: higher abs_max (up to 3.50) for riskier picks
+# Used by /api/free-picks to produce higher-odds teaser picks
+# ═══════════════════════════════════════════════════════════
+FREE_SAFETY_RULES = {
+    'Over 2.5 Goals':       (1.40, 2.50, 3.50),
+    'Over 1.5 Goals':       (1.20, 1.80, 2.50),
+    'Over 0.5 Goals':       (1.01, 1.30, 1.50),
+    'Over 3.5 Goals':       (1.60, 2.50, 3.50),
+    'Under 4.5 Goals':      (1.10, 1.50, 2.00),
+    'Under 3.5 Goals':      (1.20, 1.80, 2.50),
+    'Home Win':             (1.30, 2.00, 3.00),
+    'Away Win':             (1.30, 2.00, 3.00),
+    'Both Teams to Score':  (1.40, 2.00, 3.00),
+    'Double Chance (1X)':   (1.05, 1.60, 2.00),
+    'Double Chance (X2)':   (1.05, 1.60, 2.00),
+    'Double Chance (12)':   (1.01, 1.40, 1.80),
+    'Home or Draw':         (1.05, 1.60, 2.00),
+    'Draw or Away':         (1.05, 1.60, 2.00),
+    'Home or Away':         (1.01, 1.40, 1.80),
+    'Home to Score':        (1.10, 1.60, 2.00),
+    'Away to Score':        (1.20, 1.80, 2.50),
+    'Home Over 0.5 Goals':  (1.10, 1.60, 2.00),
+    'Away Over 0.5 Goals':  (1.20, 1.80, 2.50),
+    '1st Half Over 0.5':    (1.20, 1.80, 2.50),
+    '2nd Half Over 0.5':    (1.20, 1.80, 2.50),
+}
+FREE_DEFAULT_RULE = (1.20, 2.00, 3.00)
 
-def passes_odds_safety(market_label, odds):
+
+def passes_odds_safety(market_label, odds, free_mode=False):
     """Check if odds fall within the safety range for this market."""
-    rule = SAFETY_RULES.get(market_label, DEFAULT_RULE)
+    if free_mode:
+        rule = FREE_SAFETY_RULES.get(market_label, FREE_DEFAULT_RULE)
+    else:
+        rule = SAFETY_RULES.get(market_label, DEFAULT_RULE)
     min_odds, _, abs_max = rule
     return min_odds <= odds <= abs_max
 
 
-def is_in_sweet_spot(market_label, odds):
+def is_in_sweet_spot(market_label, odds, free_mode=False):
     """Check if odds are in the preferred sweet spot."""
-    rule = SAFETY_RULES.get(market_label, DEFAULT_RULE)
+    if free_mode:
+        rule = FREE_SAFETY_RULES.get(market_label, FREE_DEFAULT_RULE)
+    else:
+        rule = SAFETY_RULES.get(market_label, DEFAULT_RULE)
     return rule[0] <= odds <= rule[1]
 
 

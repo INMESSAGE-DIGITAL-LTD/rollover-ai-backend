@@ -358,11 +358,11 @@ def picks_by_date(date_str):
 @app.route('/api/free-picks/<date_str>', methods=['GET'])
 def free_picks_by_date(date_str):
     """
-    Free picks endpoint — higher odds, more matches (4-10).
-    Uses the same AI engine as /api/picks but with riskier parameters
+    Free picks endpoint — higher per-match odds (1.50-3.00), more matches (8-15).
+    Uses build_parlay_slip with relaxed safety rules (free_mode=True)
     to create a teaser for premium subscribers.
 
-    GET /api/free-picks/2026-02-19?max_matches=8&max_odds=4.0
+    GET /api/free-picks/2026-02-19?max_matches=12
     """
     from datetime import datetime as dt
     try:
@@ -371,12 +371,10 @@ def free_picks_by_date(date_str):
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
     try:
-        max_matches = int(request.args.get('max_matches', 8))
-        max_odds = float(request.args.get('max_odds', 4.0))
-        max_matches = min(max(max_matches, 4), 10)
-        max_odds = min(max(max_odds, 2.0), 10.0)
+        max_matches = int(request.args.get('max_matches', 12))
+        max_matches = min(max(max_matches, 8), 15)
 
-        cache_key = f"free_picks_{date_str}_{max_matches}_{max_odds}"
+        cache_key = f"free_picks_{date_str}_{max_matches}"
         cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
         if cached is not None:
             print(f"⚡ Serving cached /api/free-picks/{date_str}")
@@ -401,13 +399,15 @@ def free_picks_by_date(date_str):
             })
 
         print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
-              f"max_matches={max_matches}, max_odds={max_odds}")
+              f"max_matches={max_matches}, per-match odds 1.50-3.00")
         clear_cache()
-        result = build_daily_slip(
+        result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
-            max_matches=max_matches,
-            max_odds=max_odds,
+            num_matches=max_matches,
+            min_odds=1.50,
+            max_odds=3.00,
             sm_stats=sm_stats,
+            free_mode=True,
         )
         result['date'] = date_str
 
