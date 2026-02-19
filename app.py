@@ -399,6 +399,8 @@ def free_picks_by_date(date_str):
             })
 
         # ── Step 1: Get AI Pro picks to exclude those matches ──
+        # If pro picks are cached, exclude them. If not (cold start), accept
+        # potential overlap — the app loads pro picks first so this is rare.
         pro_cache_key = f"picks_{date_str}_4_2.6"
         pro_cached = sm_proxy.get_cache(pro_cache_key, ttl=3600)
         pro_match_keys = set()
@@ -410,25 +412,7 @@ def free_picks_by_date(date_str):
                 pro_match_keys.add(key)
             print(f"🚫 Excluding {len(pro_match_keys)} cached AI Pro matches")
         else:
-            # Pro picks not cached yet — generate them inline so we can exclude
-            print("⚙️ Generating AI Pro picks inline for exclusion...")
-            clear_cache()
-            pro_result = build_parlay_slip(
-                fixtures, predictor, stats_calculator,
-                num_matches=4,
-                min_odds=1.30,
-                max_odds=2.60,
-                sm_stats=sm_stats,
-                free_mode=False,
-            )
-            pro_matches = pro_result.get('slip', {}).get('matches', [])
-            for pm in pro_matches:
-                key = f"{pm.get('home_team', '')}_{pm.get('away_team', '')}"
-                pro_match_keys.add(key)
-            # Cache the pro result so the /api/picks endpoint can reuse it
-            pro_result['date'] = date_str
-            sm_proxy.set_cache(pro_cache_key, pro_result)
-            print(f"🚫 Generated & excluding {len(pro_match_keys)} AI Pro matches")
+            print("⚠️ AI Pro picks not cached yet — free picks may overlap (will fix on next call)")
 
         # ── Step 2: Build free slip with safe low odds ──
         print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
