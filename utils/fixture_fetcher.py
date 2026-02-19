@@ -788,26 +788,36 @@ def _empty_result(fixtures):
     }
 
 
-def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None, free_mode=False, exclude_matches=None):
+def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None, free_mode=False, exclude_matches=None, exclude_match_markets=None):
     """
     Build a higher-odds parlay from ALL markets.
     User controls number of matches (2-20).
     Each match can use any market (1X2, BTTS, Over/Under, DC, etc.)
     Select matches with highest composite score within the odds range.
-    exclude_matches: set of "HomeTeam_AwayTeam" keys to skip (avoid overlap with other slips).
+    exclude_matches: set of "HomeTeam_AwayTeam" keys to skip entirely.
+    exclude_match_markets: set of "HomeTeam_AwayTeam_Market" keys to skip
+        (allows same match with a different market).
     """
     match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats, free_mode=free_mode)
 
     # Filter to options within odds range
     filtered = [o for o in match_options if min_odds <= o['odds'] <= max_odds]
 
-    # Exclude matches that are already in another slip (e.g. AI Pro)
+    # Exclude entire matches (legacy)
     if exclude_matches:
         filtered = [
             o for o in filtered
             if f"{o['home_team']}_{o['away_team']}" not in exclude_matches
         ]
         print(f"   After excluding {len(exclude_matches)} matches: {len(filtered)} options remain")
+
+    # Exclude specific match+market combos (smart exclusion)
+    if exclude_match_markets:
+        filtered = [
+            o for o in filtered
+            if f"{o['home_team']}_{o['away_team']}_{o['market']}" not in exclude_match_markets
+        ]
+        print(f"   After excluding {len(exclude_match_markets)} match+market combos: {len(filtered)} options remain")
 
     # Sort by composite score descending
     filtered.sort(key=lambda x: x.get('composite_score', 0), reverse=True)

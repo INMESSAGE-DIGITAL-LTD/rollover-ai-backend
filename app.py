@@ -7,7 +7,7 @@ from flask_cors import CORS
 from models.multi_market_predictor import MultiMarketPredictor
 from utils.team_stats import TeamStatsCalculator
 from utils.sportmonks_stats import fetch_team_stats, fetch_h2h, clear_cache
-from utils.fixture_fetcher import fetch_todays_fixtures, fetch_fixtures_by_date, build_daily_slip, build_parlay_slip
+from utils.fixture_fetcher import fetch_todays_fixtures, fetch_fixtures_by_date, build_parlay_slip
 from utils.sportmonks_proxy import SportMonksProxy
 from history import register_history_routes, init_history_db, save_daily_picks
 import os
@@ -176,26 +176,21 @@ def test_prediction():
 def today_predictions():
     """
     Fetch today's real fixtures, run AI predictions, and return a smart slip.
+    AI Pro picks are the SAFEST — low per-match odds (1.10-1.50) for consistent wins.
     Results are cached for 5 minutes to avoid re-running AI for every request.
     """
     import time as _time
     try:
-        max_matches = int(request.args.get('max_matches', 4))
-        max_odds = float(request.args.get('max_odds', 2.60))
-        
-        max_matches = min(max(max_matches, 1), 4)
-        max_odds = min(max(max_odds, 1.5), 3.0)
-
-        # Check cache (keyed by params)
-        cache_key = f"today_{max_matches}_{max_odds}"
+        # AI Pro: safe picks with low odds per match
+        cache_key = "today_pro_safe"
         cached = sm_proxy.get_cache(cache_key, ttl=300)  # 5 min
         if cached is not None:
-            print(f"⚡ Serving cached /api/today ({cache_key})")
+            print(f"⚡ Serving cached /api/today (pro_safe)")
             return jsonify(cached)
-        
+
         print(f"🔄 Fetching today's fixtures...")
         fixtures = fetch_todays_fixtures()
-        
+
         if not fixtures:
             return jsonify({
                 'date': __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d'),
@@ -209,14 +204,17 @@ def today_predictions():
                 'all_predictions': [],
                 'message': 'No fixtures available right now. Try again later.',
             })
-        
-        print(f"🧠 Running hybrid predictions on {len(fixtures)} fixtures...")
+
+        print(f"🧠 Running AI Pro predictions on {len(fixtures)} fixtures (safe mode)...")
         clear_cache()
-        result = build_daily_slip(
+        # AI Pro: safe picks — per-match 1.10-1.50, combined 2.00-4.00
+        result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
-            max_matches=max_matches,
-            max_odds=max_odds,
+            num_matches=4,
+            min_odds=1.10,
+            max_odds=1.50,
             sm_stats=sm_stats,
+            free_mode=False,  # Strict safety rules for AI Pro
         )
         
         result['ai_model'] = {
@@ -271,9 +269,9 @@ def today_predictions():
 @app.route('/api/picks/<date_str>', methods=['GET'])
 def picks_by_date(date_str):
     """
-    Generate AI picks for any date (today or past).
+    Generate AI Pro picks for any date (today or past).
+    AI Pro = SAFEST picks: per-match odds 1.10-1.50, combined 2.00-4.00.
     Uses cached results for 1 hour to avoid re-running AI.
-    Past dates use fixture data from SportMonks.
     """
     from datetime import datetime as dt
     try:
@@ -282,12 +280,7 @@ def picks_by_date(date_str):
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
     try:
-        max_matches = int(request.args.get('max_matches', 4))
-        max_odds = float(request.args.get('max_odds', 2.60))
-        max_matches = min(max(max_matches, 1), 4)
-        max_odds = min(max(max_odds, 1.5), 3.0)
-
-        cache_key = f"picks_{date_str}_{max_matches}_{max_odds}"
+        cache_key = f"picks_pro_{date_str}"
         cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
         if cached is not None:
             print(f"⚡ Serving cached /api/picks/{date_str}")
@@ -295,7 +288,6 @@ def picks_by_date(date_str):
 
         today = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d')
         if date_str == today:
-            # Redirect to today logic
             fixtures = fetch_todays_fixtures()
         else:
             fixtures = fetch_fixtures_by_date(date_str)
@@ -312,13 +304,16 @@ def picks_by_date(date_str):
                 },
             })
 
-        print(f"🧠 Running predictions for {date_str} on {len(fixtures)} fixtures...")
+        print(f"🧠 AI Pro picks for {date_str}: {len(fixtures)} fixtures (safe mode)...")
         clear_cache()
-        result = build_daily_slip(
+        # AI Pro: safe picks — per-match 1.10-1.50
+        result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
-            max_matches=max_matches,
-            max_odds=max_odds,
+            num_matches=4,
+            min_odds=1.10,
+            max_odds=1.50,
             sm_stats=sm_stats,
+            free_mode=False,  # Strict safety rules
         )
         result['date'] = date_str
 
@@ -358,12 +353,15 @@ def picks_by_date(date_str):
 @app.route('/api/free-picks/<date_str>', methods=['GET'])
 def free_picks_by_date(date_str):
     """
-    Free picks endpoint — safe low-odds picks (1.10-1.50 per match).
+    Free picks endpoint.
+    AI Pro is SAFER than free. Free picks are riskier teasers.
+
     Rules:
-      - Max 6 matches, min 4 matches per day
-      - Individual odds: 1.10 - 1.50
-      - Combined odds: 2.00 - 4.00
-      - Must NOT overlap with AI Pro picks for the same date
+      - 6 matches per day
+      - Individual odds: 1.10 - 1.57
+      - Combined odds: 1.99 - 4.50
+      - Must NOT use same game as AI Pro (if same game, different market)
+      - Top 2 safest picks LOCKED (is_free=false, blurred), rest unlocked (is_free=true)
 
     GET /api/free-picks/2026-02-19
     """
@@ -374,7 +372,7 @@ def free_picks_by_date(date_str):
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
     try:
-        cache_key = f"free_picks_v3_{date_str}"
+        cache_key = f"free_picks_v5_{date_str}"
         cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
         if cached is not None:
             print(f"⚡ Serving cached /api/free-picks/{date_str}")
@@ -398,47 +396,44 @@ def free_picks_by_date(date_str):
                 },
             })
 
-        # ── Step 1: Get AI Pro picks to exclude those matches ──
-        # If pro picks are cached, exclude them. If not (cold start), accept
-        # potential overlap — the app loads pro picks first so this is rare.
-        pro_cache_key = f"picks_{date_str}_4_2.6"
+        # ── Step 1: Get AI Pro picks — exclude same game (allow same match if different market) ──
+        pro_cache_key = f"picks_pro_{date_str}"
         pro_cached = sm_proxy.get_cache(pro_cache_key, ttl=3600)
-        pro_match_keys = set()
+        exclude_match_markets = set()
 
         if pro_cached:
             pro_matches = pro_cached.get('slip', {}).get('matches', [])
             for pm in pro_matches:
-                key = f"{pm.get('home_team', '')}_{pm.get('away_team', '')}"
-                pro_match_keys.add(key)
-            print(f"🚫 Excluding {len(pro_match_keys)} cached AI Pro matches")
+                key = f"{pm.get('home_team', '')}_{pm.get('away_team', '')}_{pm.get('market', '')}"
+                exclude_match_markets.add(key)
+            print(f"🚫 Excluding {len(exclude_match_markets)} AI Pro match+market combos")
         else:
             print("⚠️ AI Pro picks not cached yet — free picks may overlap (will fix on next call)")
 
-        # ── Step 2: Build free slip with safe low odds ──
+        # ── Step 2: Build free slip — odds 1.10-1.57, combined 1.99-4.50 ──
         print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
-              f"odds 1.10-1.50, max 6 matches, combined 2.00-4.00")
+              f"odds 1.10-1.57, max 6 matches, combined 1.99-4.50")
         clear_cache()
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
             num_matches=6,
             min_odds=1.10,
-            max_odds=1.50,
+            max_odds=1.57,
             sm_stats=sm_stats,
-            free_mode=False,  # Use strict safety rules for consistent wins
-            exclude_matches=pro_match_keys,
+            free_mode=False,  # Use strict safety rules
+            exclude_match_markets=exclude_match_markets,
         )
         result['date'] = date_str
 
-        # ── Step 3: Enforce combined odds 2.00-4.00 ──
+        # ── Step 3: Enforce combined odds 1.99-4.50 ──
         matches = result.get('slip', {}).get('matches', [])
         combined = result.get('slip', {}).get('combined_odds', 0)
 
-        # If combined > 4.00, remove weakest picks until within range
-        if combined > 4.00 and len(matches) > 4:
-            # Sort by odds descending — drop highest-odds picks first
+        # If combined > 4.50, drop highest-odds picks until within range
+        if combined > 4.50 and len(matches) > 4:
             indexed = sorted(enumerate(matches), key=lambda x: x[1].get('odds', 0), reverse=True)
-            while combined > 4.00 and len(indexed) > 4:
-                drop_idx, drop_match = indexed.pop(0)
+            while combined > 4.50 and len(indexed) > 4:
+                _, drop_match = indexed.pop(0)
                 combined /= drop_match.get('odds', 1)
             keep_indices = {x[0] for x in indexed}
             matches = [m for i, m in enumerate(matches) if i in keep_indices]
@@ -446,12 +441,17 @@ def free_picks_by_date(date_str):
             result['slip']['match_count'] = len(matches)
             result['slip']['combined_odds'] = round(combined, 2)
 
-        # If combined < 2.00 and we have room, that's okay — still safe picks
-        # Minimum 4 matches enforced at selection level
+        # ── Step 4: Lock top 2 safest, unlock the rest ──
+        # Top 2 safest = LOCKED (blurred, need subscription)
+        # Rest = unlocked (is_free=true, shown freely)
+        sorted_by_safety = sorted(
+            enumerate(matches),
+            key=lambda x: x[1].get('ai_probability', 0),
+            reverse=True,
+        )
 
-        # Mark all free picks as unlocked (no blur on free tab)
-        for m in matches:
-            m['is_free'] = True
+        for rank, (idx, _) in enumerate(sorted_by_safety):
+            matches[idx]['is_free'] = rank >= 2  # Top 2 safest = LOCKED (is_free=false)
 
         sm_proxy.set_cache(cache_key, result)
         return jsonify(result)
