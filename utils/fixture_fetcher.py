@@ -788,26 +788,26 @@ def _empty_result(fixtures):
     }
 
 
-def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None, free_mode=False, exclude_matches=None, max_combined_odds=None):
+def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None, free_mode=False, exclude_matches=None):
     """
     Build a higher-odds parlay from ALL markets.
     User controls number of matches (2-20).
     Each match can use any market (1X2, BTTS, Over/Under, DC, etc.)
     Select matches with highest composite score within the odds range.
-
-    Args:
-        exclude_matches: set of "home_team_away_team" keys to skip (e.g. AI Pro matches).
-        max_combined_odds: if set, stop adding matches when combined odds would exceed this.
+    exclude_matches: set of "HomeTeam_AwayTeam" keys to skip (avoid overlap with other slips).
     """
     match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats, free_mode=free_mode)
 
     # Filter to options within odds range
     filtered = [o for o in match_options if min_odds <= o['odds'] <= max_odds]
 
-    # Exclude specific matches if requested (e.g. AI Pro overlap)
+    # Exclude matches that are already in another slip (e.g. AI Pro)
     if exclude_matches:
-        filtered = [o for o in filtered
-                    if f"{o['home_team']}_{o['away_team']}" not in exclude_matches]
+        filtered = [
+            o for o in filtered
+            if f"{o['home_team']}_{o['away_team']}" not in exclude_matches
+        ]
+        print(f"   After excluding {len(exclude_matches)} matches: {len(filtered)} options remain")
 
     # Sort by composite score descending
     filtered.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
@@ -821,13 +821,8 @@ def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_
         match_key = f"{opt['home_team']}_{opt['away_team']}"
         if match_key in used_matches:
             continue
-
-        new_combined = combined_odds * opt['odds']
-        if max_combined_odds and new_combined > max_combined_odds:
-            continue  # skip — would push combined odds over the cap
-
         slip_matches.append(opt)
-        combined_odds = new_combined
+        combined_odds *= opt['odds']
         used_matches.add(match_key)
         if len(slip_matches) >= num_matches:
             break

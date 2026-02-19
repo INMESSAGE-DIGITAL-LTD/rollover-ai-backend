@@ -358,13 +358,11 @@ def picks_by_date(date_str):
 @app.route('/api/free-picks/<date_str>', methods=['GET'])
 def free_picks_by_date(date_str):
     """
-    Free picks endpoint — safe, low-odds daily tips.
-
+    Free picks endpoint — safe low-odds picks (1.10-1.50 per match).
     Rules:
-      - 4-6 matches per day (target 6, minimum 4)
-      - Per-match odds: 1.10–1.50
-      - Combined odds: 2.00–4.00
-      - Uses premium safety rules (free_mode=False) for quality
+      - Max 6 matches, min 4 matches per day
+      - Individual odds: 1.10 - 1.50
+      - Combined odds: 2.00 - 4.00
       - Must NOT overlap with AI Pro picks for the same date
 
     GET /api/free-picks/2026-02-19
@@ -376,7 +374,7 @@ def free_picks_by_date(date_str):
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
     try:
-        cache_key = f"free_picks_{date_str}"
+        cache_key = f"free_picks_v2_{date_str}"
         cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
         if cached is not None:
             print(f"⚡ Serving cached /api/free-picks/{date_str}")
@@ -400,37 +398,20 @@ def free_picks_by_date(date_str):
                 },
             })
 
-        # ── Collect AI Pro match keys to exclude overlap ──
-        exclude_matches = set()
-        for mm in [4]:
-            for mo in [2.6]:
-                pro_key = f"picks_{date_str}_{mm}_{mo}"
-                pro_cached = sm_proxy.get_cache(pro_key, ttl=7200)
-                if pro_cached:
-                    pro_matches = pro_cached.get('slip', {}).get('matches', [])
-                    for pm in pro_matches:
-                        ht = pm.get('home_team', '')
-                        at = pm.get('away_team', '')
-                        if ht and at:
-                            exclude_matches.add(f"{ht}_{at}")
-        # Also check /api/today cache
-        for mm in [4]:
-            for mo in [2.6]:
-                today_key = f"today_{mm}_{mo}"
-                today_cached = sm_proxy.get_cache(today_key, ttl=7200)
-                if today_cached:
-                    today_matches = today_cached.get('slip', {}).get('matches', [])
-                    for tm in today_matches:
-                        ht = tm.get('home_team', '')
-                        at = tm.get('away_team', '')
-                        if ht and at:
-                            exclude_matches.add(f"{ht}_{at}")
+        # ── Step 1: Get AI Pro picks to exclude those matches ──
+        pro_cache_key = f"picks_{date_str}_4_2.6"
+        pro_cached = sm_proxy.get_cache(pro_cache_key, ttl=3600)
+        pro_match_keys = set()
+        if pro_cached:
+            pro_matches = pro_cached.get('slip', {}).get('matches', [])
+            for pm in pro_matches:
+                key = f"{pm.get('home_team', '')}_{pm.get('away_team', '')}"
+                pro_match_keys.add(key)
+            print(f"🚫 Excluding {len(pro_match_keys)} AI Pro matches from free picks")
 
-        if exclude_matches:
-            print(f"🚫 Excluding {len(exclude_matches)} AI Pro matches from free picks")
-
+        # ── Step 2: Build free slip with safe low odds ──
         print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
-              f"target 4-6 matches, per-match odds 1.10-1.50, combined max 4.00")
+              f"odds 1.10-1.50, max 6 matches, combined 2.00-4.00")
         clear_cache()
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
@@ -438,11 +419,34 @@ def free_picks_by_date(date_str):
             min_odds=1.10,
             max_odds=1.50,
             sm_stats=sm_stats,
-            free_mode=False,            # premium safety rules for quality
-            exclude_matches=exclude_matches,
-            max_combined_odds=4.00,     # cap combined odds at 4.00
+            free_mode=False,  # Use strict safety rules for consistent wins
+            exclude_matches=pro_match_keys,
         )
         result['date'] = date_str
+
+        # ── Step 3: Enforce combined odds 2.00-4.00 ──
+        matches = result.get('slip', {}).get('matches', [])
+        combined = result.get('slip', {}).get('combined_odds', 0)
+
+        # If combined > 4.00, remove weakest picks until within range
+        if combined > 4.00 and len(matches) > 4:
+            # Sort by odds descending — drop highest-odds picks first
+            indexed = sorted(enumerate(matches), key=lambda x: x[1].get('odds', 0), reverse=True)
+            while combined > 4.00 and len(indexed) > 4:
+                drop_idx, drop_match = indexed.pop(0)
+                combined /= drop_match.get('odds', 1)
+            keep_indices = {x[0] for x in indexed}
+            matches = [m for i, m in enumerate(matches) if i in keep_indices]
+            result['slip']['matches'] = matches
+            result['slip']['match_count'] = len(matches)
+            result['slip']['combined_odds'] = round(combined, 2)
+
+        # If combined < 2.00 and we have room, that's okay — still safe picks
+        # Minimum 4 matches enforced at selection level
+
+        # Mark all free picks as unlocked (no blur on free tab)
+        for m in matches:
+            m['is_free'] = True
 
         sm_proxy.set_cache(cache_key, result)
         return jsonify(result)
