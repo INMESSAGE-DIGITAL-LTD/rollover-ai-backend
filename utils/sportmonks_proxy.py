@@ -15,6 +15,9 @@ SPORTMONKS_TOKEN = os.environ.get(
 )
 SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
+# Import league ID → name mapping from fixture_fetcher
+from utils.fixture_fetcher import LEAGUE_IDS, LEAGUE_FILTER
+
 # State ID classification
 LIVE_STATE_IDS = {2, 3, 4, 6, 9, 21, 22, 23, 25}
 FINISHED_STATE_IDS = {5, 7, 8, 14, 15, 17}
@@ -74,7 +77,7 @@ class SportMonksProxy:
             url = (
                 f"{SPORTMONKS_BASE}/livescores/inplay"
                 f"?api_token={SPORTMONKS_TOKEN}"
-                f"&include=participants;scores"
+                f"&include=participants;scores;league"
             )
             req = urllib.request.Request(url)
             with urllib.request.urlopen(req, timeout=15) as resp:
@@ -128,6 +131,13 @@ class SportMonksProxy:
         state_id = event.get('state_id', 1)
         status = _state_to_status(state_id)
 
+        # Extract league info
+        league_data = event.get('league') or {}
+        league_id = league_data.get('id') or event.get('league_id') or 0
+        league_name = LEAGUE_IDS.get(league_id, league_data.get('name', ''))
+        league_logo = league_data.get('image_path', '')
+        league_country = (league_data.get('country') or {}).get('name', '')
+
         # Parse scores
         home_score = None
         away_score = None
@@ -157,6 +167,10 @@ class SportMonksProxy:
             'match_status': status,
             'state_id': state_id,
             'starting_at': event.get('starting_at', ''),
+            'league_id': league_id,
+            'league_name': league_name,
+            'league_logo': league_logo,
+            'league_country': league_country,
         }
 
     # ── Fixtures by date (cached 10 min) ──
@@ -171,11 +185,10 @@ class SportMonksProxy:
     def _fetch_fixtures(self, date_str):
         """Fetch all fixtures for a date from SportMonks."""
         try:
-            from utils.fixture_fetcher import LEAGUE_FILTER
             url = (
                 f"{SPORTMONKS_BASE}/fixtures/date/{date_str}"
                 f"?api_token={SPORTMONKS_TOKEN}"
-                f"&include=participants;scores"
+                f"&include=participants;scores;league"
                 f"&filters=fixtureLeagues:{LEAGUE_FILTER}"
                 f"&per_page=50"
             )
