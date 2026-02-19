@@ -355,6 +355,69 @@ def picks_by_date(date_str):
         print(f"❌ Error in /api/picks/{date_str}: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/free-picks/<date_str>', methods=['GET'])
+def free_picks_by_date(date_str):
+    """
+    Free picks endpoint — higher odds, more matches (4-10).
+    Uses the same AI engine as /api/picks but with riskier parameters
+    to create a teaser for premium subscribers.
+
+    GET /api/free-picks/2026-02-19?max_matches=8&max_odds=4.0
+    """
+    from datetime import datetime as dt
+    try:
+        dt.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    try:
+        max_matches = int(request.args.get('max_matches', 8))
+        max_odds = float(request.args.get('max_odds', 4.0))
+        max_matches = min(max(max_matches, 4), 10)
+        max_odds = min(max(max_odds, 2.0), 10.0)
+
+        cache_key = f"free_picks_{date_str}_{max_matches}_{max_odds}"
+        cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
+        if cached is not None:
+            print(f"⚡ Serving cached /api/free-picks/{date_str}")
+            return jsonify(cached)
+
+        today = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d')
+        if date_str == today:
+            fixtures = fetch_todays_fixtures()
+        else:
+            fixtures = fetch_fixtures_by_date(date_str)
+
+        if not fixtures:
+            return jsonify({
+                'date': date_str,
+                'total_fixtures_analyzed': 0,
+                'slip': {
+                    'matches': [],
+                    'match_count': 0,
+                    'combined_odds': 0,
+                    'slip_confidence': 'NONE',
+                },
+            })
+
+        print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
+              f"max_matches={max_matches}, max_odds={max_odds}")
+        clear_cache()
+        result = build_daily_slip(
+            fixtures, predictor, stats_calculator,
+            max_matches=max_matches,
+            max_odds=max_odds,
+            sm_stats=sm_stats,
+        )
+        result['date'] = date_str
+
+        sm_proxy.set_cache(cache_key, result)
+        return jsonify(result)
+
+    except Exception as e:
+        print(f"❌ Error in /api/free-picks/{date_str}: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/parlay', methods=['GET'])
 def parlay_predictions():
     """
