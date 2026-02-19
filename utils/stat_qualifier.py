@@ -36,6 +36,14 @@ SAFETY_RULES = {
     'Away Over 0.5 Goals':  (1.10, 1.50, 1.57),
     '1st Half Over 0.5':    (1.15, 1.55, 1.60),
     '2nd Half Over 0.5':    (1.15, 1.55, 1.60),
+    'Draw':                 (1.15, 1.50, 1.60),
+    'BTTS No':              (1.10, 1.50, 1.60),
+    '1st Half Under 0.5':   (1.15, 1.55, 1.60),
+    '2nd Half Under 0.5':   (1.15, 1.55, 1.60),
+    'Home Over 1.5 Goals':  (1.10, 1.50, 1.60),
+    'Away Over 1.5 Goals':  (1.10, 1.50, 1.60),
+    'Home Over 2.5 Goals':  (1.50, 1.60, 1.60),
+    'Away Over 2.5 Goals':  (1.50, 1.60, 1.60),
 }
 
 # Default rule for markets not listed above
@@ -67,6 +75,14 @@ FREE_SAFETY_RULES = {
     'Away Over 0.5 Goals':  (1.20, 1.80, 2.50),
     '1st Half Over 0.5':    (1.20, 1.80, 2.50),
     '2nd Half Over 0.5':    (1.20, 1.80, 2.50),
+    'Draw':                 (2.50, 3.50, 4.50),
+    'BTTS No':              (1.40, 1.80, 2.50),
+    '1st Half Under 0.5':   (1.50, 2.00, 2.50),
+    '2nd Half Under 0.5':   (1.50, 2.00, 2.50),
+    'Home Over 1.5 Goals':  (1.40, 2.00, 3.00),
+    'Away Over 1.5 Goals':  (1.50, 2.20, 3.00),
+    'Home Over 2.5 Goals':  (1.80, 2.50, 3.50),
+    'Away Over 2.5 Goals':  (2.00, 2.80, 4.00),
 }
 FREE_DEFAULT_RULE = (1.20, 2.00, 3.00)
 
@@ -131,6 +147,10 @@ def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h, 
         min_edge = 0.04 if has_stats else 0.03
     elif lab in ('home win', 'away win'):
         min_edge = 0.05 if has_stats else 0.04  # Result markets need higher edge
+    elif lab == 'draw':
+        min_edge = 0.05 if has_stats else 0.04  # Draw is risky, needs strong edge
+    elif 'under 0.5' in lab:
+        min_edge = 0.03 if has_stats else 0.02
     else:
         min_edge = 0.03 if has_stats else 0.02
 
@@ -173,6 +193,8 @@ def _qualify_by_market(label, ai_prob, implied_prob, home, away, h2h):
         return _qualify_over25(ai_prob, implied_prob, home, away, h2h)
     elif 'over 1.5' in lab:
         return _qualify_over15(ai_prob, implied_prob, home, away, h2h)
+    elif 'under 0.5' in lab and 'half' in lab:
+        return _qualify_under(ai_prob, implied_prob, home, away)
     elif 'over 0.5' in lab and ('home' in lab or 'away' in lab or 'half' in lab):
         return _qualify_team_goals(ai_prob, implied_prob, home, away)
     elif 'over 0.5' in lab:
@@ -181,8 +203,12 @@ def _qualify_by_market(label, ai_prob, implied_prob, home, away, h2h):
         return _qualify_home_win(ai_prob, implied_prob, home, away, h2h)
     elif lab == 'away win':
         return _qualify_away_win(ai_prob, implied_prob, home, away, h2h)
+    elif lab == 'draw':
+        return _qualify_draw(ai_prob, implied_prob, home, away, h2h)
     elif 'under 4.5' in lab or 'under 3.5' in lab:
         return _qualify_under(ai_prob, implied_prob, home, away)
+    elif lab == 'btts no':
+        return _qualify_btts_no(ai_prob, implied_prob, home, away, h2h)
     elif 'both teams' in lab:
         return _qualify_btts(ai_prob, implied_prob, home, away, h2h)
     elif 'double chance' in lab or 'home or draw' in lab or 'draw or away' in lab or 'home or away' in lab:
@@ -311,6 +337,47 @@ def _qualify_btts(ai_prob, implied, home, away, h2h):
     return min(0.92, max(blended, implied + 0.02))
 
 
+def _qualify_draw(ai_prob, implied, home, away, h2h):
+    """Draw — riskier market, needs strong statistical support."""
+    if home is None or away is None:
+        return max(ai_prob, implied + 0.03)
+
+    # Draws are more likely when teams are evenly matched
+    home_wr = home['home_win_rate']
+    away_lr = away.get('away_loss_rate', 0.5)
+    # Neither team dominant
+    balance = 1.0 - abs(home_wr - (1.0 - away_lr))
+    clean_factor = (home.get('clean_sheet_rate', 0.3) + away.get('clean_sheet_rate', 0.3)) / 2.0
+
+    stats_prob = balance * 0.30 + clean_factor * 0.20 + 0.15
+    if h2h and h2h['total_matches'] >= 3:
+        draw_count = h2h['total_matches'] - h2h.get('team1_wins', 0) - h2h.get('team2_wins', 0)
+        h2h_draw_rate = draw_count / h2h['total_matches']
+        stats_prob = stats_prob * 0.70 + h2h_draw_rate * 0.30
+
+    blended = ai_prob * 0.50 + stats_prob * 0.25 + implied * 0.25
+    return min(0.55, max(blended, implied + 0.02))
+
+
+def _qualify_btts_no(ai_prob, implied, home, away, h2h):
+    """BTTS No — inverse of BTTS Yes, boosted by clean sheet rates."""
+    if home is None or away is None:
+        return max(ai_prob, implied + 0.03)
+
+    avg_btts = (home['btts_rate'] + away['btts_rate']) / 2
+    no_btts_rate = 1.0 - avg_btts
+    clean_factor = (home.get('clean_sheet_rate', 0.3) + away.get('clean_sheet_rate', 0.3)) / 2.0
+
+    stats_prob = no_btts_rate * 0.35 + clean_factor * 0.25 + 0.15
+    if h2h and h2h['total_matches'] >= 3:
+        h2h_btts = h2h['btts_count'] / h2h['total_matches']
+        h2h_no = 1.0 - h2h_btts
+        stats_prob = stats_prob * 0.70 + h2h_no * 0.30
+
+    blended = ai_prob * 0.50 + stats_prob * 0.30 + implied * 0.20
+    return min(0.75, max(blended, implied + 0.02))
+
+
 def _qualify_double_chance(label, ai_prob, implied, home, away):
     if home is None or away is None:
         return max(ai_prob, implied + 0.04)
@@ -356,9 +423,21 @@ def _compute_stability(market_label, home, away):
             max(0, 1.0 - team['avg_goals_conceded'] / 3.0) * 0.2
         )
 
-    if 'both teams' in lab:
-        return (home['btts_rate'] + away['btts_rate']) / 2.0 * 0.5 + \
-               (home['scored_in_rate'] + away['scored_in_rate']) / 2.0 * 0.5
+    if 'both teams' in lab or lab == 'btts no':
+        btts_rate = (home['btts_rate'] + away['btts_rate']) / 2.0
+        scored_rate = (home['scored_in_rate'] + away['scored_in_rate']) / 2.0
+        if lab == 'btts no':
+            return (1.0 - btts_rate) * 0.5 + \
+                   (home.get('clean_sheet_rate', 0.3) + away.get('clean_sheet_rate', 0.3)) / 2.0 * 0.5
+        return btts_rate * 0.5 + scored_rate * 0.5
+
+    if lab == 'draw':
+        return 0.40  # Draws are inherently less stable/predictable
+
+    if 'under' in lab and 'goal' in lab:
+        clean = (home.get('clean_sheet_rate', 0.3) + away.get('clean_sheet_rate', 0.3)) / 2.0
+        low_scoring = 1.0 - min(1.0, (home['avg_goals_scored'] + away['avg_goals_scored']) / 4.0)
+        return clean * 0.5 + low_scoring * 0.5
 
     if 'double chance' in lab or 'or' in lab:
         return 0.65  # DC is inherently more stable

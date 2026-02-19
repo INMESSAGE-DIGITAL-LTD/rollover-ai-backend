@@ -100,6 +100,12 @@ AI_MARKET_MAP = {
     'double_chance_home_draw': 'dc_home_draw',
     'double_chance_away_draw': 'dc_away_draw',
     'double_chance_home_away': 'dc_home_away',
+    'draw': 'draw',
+    'btts_no': 'btts_no',
+    'home_over_15': 'home_over_15',
+    'away_over_15': 'away_over_15',
+    'fh_under_05': 'fh_under_05',
+    'sh_under_05': 'sh_under_05',
 }
 
 # Fallback mapping when expanded models aren't trained yet
@@ -111,6 +117,12 @@ AI_MARKET_FALLBACK = {
     'dc_away_draw': 'away_over_05',
     'dc_home_away': 'ft_over_15',
     'ft_over_25': 'ft_over_15',
+    'draw': 'ft_over_15',
+    'btts_no': 'ft_over_15',
+    'home_over_15': 'ft_over_15',
+    'away_over_15': 'ft_over_15',
+    'fh_under_05': 'fh_over_05',
+    'sh_under_05': 'sh_over_05',
 }
 
 
@@ -577,6 +589,30 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         ag = markets.get('away_goals', {})
         if 0.5 in ag and 'over' in ag[0.5]:
             _try_add('Away Over 0.5 Goals', ag[0.5]['over'], AI_MARKET_MAP['away_over_05'])
+
+        # === Draw (1X2) — high odds, valuable for free picks ===
+        if 'draw' in ftr:
+            _try_add('Draw', ftr['draw'], AI_MARKET_MAP['draw'])
+
+        # === BTTS No ===
+        if 'no' in btts_m:
+            _try_add('BTTS No', btts_m['no'], AI_MARKET_MAP['btts_no'])
+
+        # === 1st/2nd Half Under 0.5 ===
+        if 0.5 in fhg and 'under' in fhg[0.5]:
+            _try_add('1st Half Under 0.5', fhg[0.5]['under'], AI_MARKET_MAP['fh_under_05'])
+        if 0.5 in shg and 'under' in shg[0.5]:
+            _try_add('2nd Half Under 0.5', shg[0.5]['under'], AI_MARKET_MAP['sh_under_05'])
+
+        # === Home/Away Over 1.5 & 2.5 Goals ===
+        if 1.5 in hg and 'over' in hg[1.5]:
+            _try_add('Home Over 1.5 Goals', hg[1.5]['over'], AI_MARKET_MAP['home_over_15'])
+        if 2.5 in hg and 'over' in hg[2.5]:
+            _try_add('Home Over 2.5 Goals', hg[2.5]['over'], 'ft_over_25')
+        if 1.5 in ag and 'over' in ag[1.5]:
+            _try_add('Away Over 1.5 Goals', ag[1.5]['over'], AI_MARKET_MAP['away_over_15'])
+        if 2.5 in ag and 'over' in ag[2.5]:
+            _try_add('Away Over 2.5 Goals', ag[2.5]['over'], 'ft_over_25')
 
     return match_options
 
