@@ -552,6 +552,12 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
         # === Fulltime Result ===
         ftr = markets.get('fulltime_result', {})
+
+        # Debug: log available markets per fixture
+        hg_keys = list(markets.get('home_goals', {}).keys())
+        ag_keys = list(markets.get('away_goals', {}).keys())
+        print(f"  🔍 {home} vs {away} markets: ftr={list(ftr.keys())} btts={list(btts_m.keys())} hg_lines={hg_keys} ag_lines={ag_keys} fhg={list(markets.get('first_half_goals', {}).keys())} shg={list(markets.get('second_half_goals', {}).keys())}")
+
         if 'home' in ftr:
             _try_add('Home Win', ftr['home'], AI_MARKET_MAP['home_win'])
         if 'away' in ftr:
