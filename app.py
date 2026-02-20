@@ -10,6 +10,7 @@ from utils.sportmonks_stats import fetch_team_stats, fetch_h2h, clear_cache
 from utils.fixture_fetcher import fetch_todays_fixtures, fetch_fixtures_by_date, build_parlay_slip
 from utils.sportmonks_proxy import SportMonksProxy
 from history import register_history_routes, init_history_db, save_daily_picks
+from firebase_config import get_firestore_client
 import os
 
 app = Flask(__name__)
@@ -18,7 +19,7 @@ CORS(app)  # Enable CORS for Flutter app
 # Initialize SportMonks proxy with caching + background polling
 sm_proxy = SportMonksProxy()
 
-# Initialize pick history database
+# Initialize pick history database (Firestore)
 init_history_db()
 register_history_routes(app)
 
@@ -175,107 +176,20 @@ def test_prediction():
 @app.route('/api/today', methods=['GET'])
 def today_predictions():
     """
-    Fetch today's real fixtures, run AI predictions, and return a smart slip.
-    Returns up to max_matches sorted by confidence (default 10).
-    Frontend slices: first 4 → AI Pro, next 6 → Free.
-    Results are cached for 5 minutes to avoid re-running AI for every request.
+    Fetch today's predictions.
+    1. READ from Firestore first (FAST).
+    2. If missing, GENERATE via AI (SLOW) and save.
     """
-    import time as _time
-    try:
-        max_matches = request.args.get('max_matches', 10, type=int)
-        max_matches = max(4, min(20, max_matches))
-
-        cache_key = f"today_v2_{max_matches}"
-        cached = sm_proxy.get_cache(cache_key, ttl=300)  # 5 min
-        if cached is not None:
-            print(f"⚡ Serving cached /api/today (max={max_matches})")
-            return jsonify(cached)
-
-        print(f"🔄 Fetching today's fixtures...")
-        fixtures = fetch_todays_fixtures()
-
-        if not fixtures:
-            return jsonify({
-                'date': __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d'),
-                'total_fixtures_analyzed': 0,
-                'slip': {
-                    'matches': [],
-                    'match_count': 0,
-                    'combined_odds': 0,
-                    'slip_confidence': 'NONE',
-                },
-                'all_predictions': [],
-                'message': 'No fixtures available right now. Try again later.',
-            })
-
-        print(f"🧠 Running AI predictions on {len(fixtures)} fixtures (max={max_matches})...")
-        clear_cache()
-        # Return top N matches sorted by confidence, odds 1.10-1.60
-        result = build_parlay_slip(
-            fixtures, predictor, stats_calculator,
-            num_matches=max_matches,
-            min_odds=1.10,
-            max_odds=1.60,
-            sm_stats=sm_stats,
-            free_mode=False,
-        )
-        
-        result['ai_model'] = {
-            'version': '2.1.0',
-            'engine': 'hybrid',
-            'markets_analyzed': len(predictor.models),
-            'features': len(predictor.feature_names),
-            'teams_in_database': len(stats_calculator.get_all_teams()),
-        }
-        
-        print(f"✅ Slip ready: {result['slip']['match_count']} matches, "
-              f"odds {result['slip']['combined_odds']}")
-        
-        # Auto-save slip to history for cloud sync
-        slip_matches = result.get('slip', {}).get('matches', [])
-        if slip_matches:
-            try:
-                date_str = result.get('date', __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d'))
-                picks_for_history = [
-                    {
-                        "home_team": m.get("home_team", ""),
-                        "away_team": m.get("away_team", ""),
-                        "market": m.get("market", ""),
-                        "odds": m.get("odds", 0),
-                        "confidence": m.get("ai_probability", 0),
-                        "result": "pending",
-                        "league": m.get("league", ""),
-                        "home_logo": m.get("home_logo"),
-                        "away_logo": m.get("away_logo"),
-                        "league_logo": m.get("league_logo"),
-                        "home_short_code": m.get("home_short_code"),
-                        "away_short_code": m.get("away_short_code"),
-                        "kickoff": m.get("kickoff"),
-                    }
-                    for m in slip_matches
-                ]
-                save_daily_picks(date_str, picks_for_history)
-                print(f"💾 Saved {len(picks_for_history)} picks to history for {date_str}")
-            except Exception as he:
-                print(f"⚠️ History save failed (non-fatal): {he}")
-        
-        # Cache the result
-        sm_proxy.set_cache(cache_key, result)
-        
-        return jsonify(result)
-        
-    except Exception as e:
-        print(f"❌ Error in /api/today: {e}")
-        return jsonify({'error': str(e)}), 500
+    import datetime
+    today = datetime.datetime.utcnow().strftime('%Y-%m-%d')
+    return picks_by_date(today)
 
 
 @app.route('/api/picks/<date_str>', methods=['GET'])
 def picks_by_date(date_str):
     """
-    Generate AI picks for any date (today or past).
-    Returns up to max_matches sorted by confidence (default 10).
-    Frontend slices: first 4 → AI Pro, next 6 → Free.
-    Uses cached results for 1 hour to avoid re-running AI.
+    Get picks for a specific date.
+    Checks Firestore first. If missing, generates on-demand.
     """
     from datetime import datetime as dt
     try:
@@ -283,17 +197,42 @@ def picks_by_date(date_str):
     except ValueError:
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
-    # Accept max_matches query param (default 10, min 4, max 20)
     max_matches = request.args.get('max_matches', 10, type=int)
     max_matches = max(4, min(20, max_matches))
 
     try:
-        cache_key = f"picks_v2_{date_str}_{max_matches}"
-        cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
-        if cached is not None:
-            print(f"⚡ Serving cached /api/picks/{date_str} (max={max_matches})")
-            return jsonify(cached)
+        # ─── 1. FAST PATH: Check Firestore ───
+        db = get_firestore_client()
+        doc = db.collection('daily_predictions').document(date_str).get()
+        
+        if doc.exists:
+            data = doc.to_dict()
+            matches = data.get('matches', [])
+            
+            if matches:
+                # Slice to requested count
+                matches = matches[:max_matches]
+                
+                # Calculate combined odds for the slice
+                combined = 1.0
+                for m in matches:
+                    combined *= float(m.get('odds', 1.0))
+                
+                print(f"⚡ Serving Firestore picks for {date_str} ({len(matches)} matches)")
+                return jsonify({
+                    'date': date_str,
+                    'slip': {
+                        'matches': matches,
+                        'match_count': len(matches),
+                        'combined_odds': round(combined, 2),
+                        'slip_confidence': data.get('slip_confidence', 'HIGH'),
+                    },
+                    'source': 'firestore'
+                })
 
+        # ─── 2. SLOW PATH: Generate On-Demand (Fallback) ───
+        print(f"⚠️ No Firestore doc for {date_str}, generating on-demand...")
+        
         today = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d')
         if date_str == today:
             fixtures = fetch_todays_fixtures()
@@ -303,59 +242,43 @@ def picks_by_date(date_str):
         if not fixtures:
             return jsonify({
                 'date': date_str,
-                'total_fixtures_analyzed': 0,
-                'slip': {
-                    'matches': [],
-                    'match_count': 0,
-                    'combined_odds': 0,
-                    'slip_confidence': 'NONE',
-                },
+                'slip': {'matches': [], 'match_count': 0},
+                'message': 'No fixtures available.'
             })
 
-        print(f"🧠 AI picks for {date_str}: {len(fixtures)} fixtures, max_matches={max_matches}...")
+        print(f"🧠 AI generating for {date_str} ({len(fixtures)} fixtures)...")
         clear_cache()
-        # Return top N matches sorted by confidence, odds 1.10-1.60
+        
+        # Generate full 10 matches standard
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
-            num_matches=max_matches,
+            num_matches=10,  # Always generate 10 for storage
             min_odds=1.10,
             max_odds=1.60,
             sm_stats=sm_stats,
             free_mode=False,
         )
-        result['date'] = date_str
-
-        # Save to history
+        
+        # Save to Firestore for next time
         slip_matches = result.get('slip', {}).get('matches', [])
         if slip_matches:
-            try:
-                picks_for_history = [
-                    {
-                        "home_team": m.get("home_team", ""),
-                        "away_team": m.get("away_team", ""),
-                        "market": m.get("market", ""),
-                        "odds": m.get("odds", 0),
-                        "confidence": m.get("ai_probability", 0),
-                        "result": "pending",
-                        "league": m.get("league", ""),
-                        "home_logo": m.get("home_logo"),
-                        "away_logo": m.get("away_logo"),
-                        "league_logo": m.get("league_logo"),
-                        "home_short_code": m.get("home_short_code"),
-                        "away_short_code": m.get("away_short_code"),
-                        "kickoff": m.get("kickoff"),
-                    }
-                    for m in slip_matches
-                ]
-                save_daily_picks(date_str, picks_for_history)
-            except Exception as he:
-                print(f"⚠️ History save failed: {he}")
+            save_daily_picks(date_str, slip_matches)
+            print(f"💾 Saved generated picks to Firestore")
 
-        sm_proxy.set_cache(cache_key, result)
+        # Slice for response
+        if len(slip_matches) > max_matches:
+             result['slip']['matches'] = slip_matches[:max_matches]
+             result['slip']['match_count'] = max_matches
+             # Recalculate odds
+             combined = 1.0
+             for m in result['slip']['matches']:
+                 combined *= float(m.get('odds', 1.0))
+             result['slip']['combined_odds'] = round(combined, 2)
+
         return jsonify(result)
 
     except Exception as e:
-        print(f"❌ Error in /api/picks/{date_str}: {e}")
+        print(f"❌ Error in picks_by_date: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/free-picks/<date_str>', methods=['GET'])
@@ -567,6 +490,38 @@ def leagues():
     except Exception as e:
         print(f"❌ Error in /api/leagues: {e}")
         return jsonify({'error': str(e), 'leagues': []}), 500
+
+@app.route('/api/generate-daily', methods=['POST'])
+def generate_daily():
+    """
+    Manual trigger: Generate today's predictions and write to Firestore.
+    Protected by CRON_SECRET Bearer token.
+    The cron job uses cron_generate.py directly (no HTTP).
+    This endpoint exists for manual/emergency triggers only.
+
+    POST /api/generate-daily
+    Header: Authorization: Bearer <CRON_SECRET>
+    """
+    # ── Auth check ──
+    cron_secret = os.environ.get('CRON_SECRET', '')
+    auth_header = request.headers.get('Authorization', '')
+    if not cron_secret or auth_header != f'Bearer {cron_secret}':
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        from services.generator import generate_and_store
+
+        fixtures = fetch_todays_fixtures()
+        result = generate_and_store(
+            fixtures, predictor, stats_calculator, sm_stats,
+        )
+        status_code = 200 if result['status'] == 'success' else 200
+        return jsonify(result), status_code
+
+    except Exception as e:
+        print(f"❌ Generate error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))

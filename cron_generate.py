@@ -1,0 +1,56 @@
+"""
+Render Cron Job: Generate daily predictions and write to Firestore.
+Runs daily at 00:00 WAT (23:00 UTC) via Render's built-in cron scheduler.
+
+No HTTP. No Flask. Pure worker script.
+Imports the shared generator service for all business logic.
+"""
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from datetime import datetime
+from utils.fixture_fetcher import fetch_todays_fixtures
+from utils.sportmonks_stats import fetch_team_stats, fetch_h2h
+from models.multi_market_predictor import MultiMarketPredictor
+from utils.team_stats import TeamStatsCalculator
+from history import init_history_db, save_daily_picks
+from services.generator import generate_and_store
+
+
+class _SmStatsProxy:
+    def fetch_team_stats(self, team_id):
+        return fetch_team_stats(team_id)
+    def fetch_h2h(self, team1_id, team2_id):
+        return fetch_h2h(team1_id, team2_id)
+
+
+def main():
+    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+    print(f"🕛 Cron worker started for {today_str}")
+
+    # Load models
+    print("🔄 Loading models...")
+    predictor = MultiMarketPredictor()
+    predictor.load_models('models/trained')
+    stats_calculator = TeamStatsCalculator('data/raw/all_matches.csv')
+    sm_stats = _SmStatsProxy()
+    print("✅ Models loaded")
+
+    # Fetch fixtures
+    fixtures = fetch_todays_fixtures()
+
+    # Init SQLite for backup
+    init_history_db()
+
+    # Run generator service (AI → Firestore → cleanup)
+    result = generate_and_store(
+        fixtures, predictor, stats_calculator, sm_stats,
+    )
+
+    print(f"🎉 Cron complete: {result['message']}")
+
+
+if __name__ == '__main__':
+    main()
