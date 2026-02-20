@@ -4,4 +4,20 @@ services:
     env: python
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120
-    plan: free
+    plan: standard
+    envVars:
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      - key: CRON_SECRET
+        generateValue: true
+
+  - type: cron
+    name: rollover-daily-predictions
+    env: python
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    schedule: "0 23 * * *"
+    startCommand: python cron_generate.py
+    plan: standard
+    envVars:
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
