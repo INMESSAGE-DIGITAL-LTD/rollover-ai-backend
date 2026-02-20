@@ -176,16 +176,19 @@ def test_prediction():
 def today_predictions():
     """
     Fetch today's real fixtures, run AI predictions, and return a smart slip.
-    AI Pro picks are the SAFEST — low per-match odds (1.10-1.50) for consistent wins.
+    Returns up to max_matches sorted by confidence (default 10).
+    Frontend slices: first 4 → AI Pro, next 6 → Free.
     Results are cached for 5 minutes to avoid re-running AI for every request.
     """
     import time as _time
     try:
-        # AI Pro: safe picks with low odds per match
-        cache_key = "today_pro_safe"
+        max_matches = request.args.get('max_matches', 10, type=int)
+        max_matches = max(4, min(20, max_matches))
+
+        cache_key = f"today_v2_{max_matches}"
         cached = sm_proxy.get_cache(cache_key, ttl=300)  # 5 min
         if cached is not None:
-            print(f"⚡ Serving cached /api/today (pro_safe)")
+            print(f"⚡ Serving cached /api/today (max={max_matches})")
             return jsonify(cached)
 
         print(f"🔄 Fetching today's fixtures...")
@@ -205,16 +208,16 @@ def today_predictions():
                 'message': 'No fixtures available right now. Try again later.',
             })
 
-        print(f"🧠 Running AI Pro predictions on {len(fixtures)} fixtures (safe mode)...")
+        print(f"🧠 Running AI predictions on {len(fixtures)} fixtures (max={max_matches})...")
         clear_cache()
-        # AI Pro: safe picks — per-match 1.10-1.50, combined 2.00-4.00
+        # Return top N matches sorted by confidence, odds 1.10-1.60
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
-            num_matches=4,
+            num_matches=max_matches,
             min_odds=1.10,
-            max_odds=1.50,
+            max_odds=1.60,
             sm_stats=sm_stats,
-            free_mode=False,  # Strict safety rules for AI Pro
+            free_mode=False,
         )
         
         result['ai_model'] = {
@@ -269,8 +272,9 @@ def today_predictions():
 @app.route('/api/picks/<date_str>', methods=['GET'])
 def picks_by_date(date_str):
     """
-    Generate AI Pro picks for any date (today or past).
-    AI Pro = SAFEST picks: per-match odds 1.10-1.50, combined 2.00-4.00.
+    Generate AI picks for any date (today or past).
+    Returns up to max_matches sorted by confidence (default 10).
+    Frontend slices: first 4 → AI Pro, next 6 → Free.
     Uses cached results for 1 hour to avoid re-running AI.
     """
     from datetime import datetime as dt
@@ -279,11 +283,15 @@ def picks_by_date(date_str):
     except ValueError:
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
+    # Accept max_matches query param (default 10, min 4, max 20)
+    max_matches = request.args.get('max_matches', 10, type=int)
+    max_matches = max(4, min(20, max_matches))
+
     try:
-        cache_key = f"picks_pro_{date_str}"
+        cache_key = f"picks_v2_{date_str}_{max_matches}"
         cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
         if cached is not None:
-            print(f"⚡ Serving cached /api/picks/{date_str}")
+            print(f"⚡ Serving cached /api/picks/{date_str} (max={max_matches})")
             return jsonify(cached)
 
         today = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d')
@@ -304,16 +312,16 @@ def picks_by_date(date_str):
                 },
             })
 
-        print(f"🧠 AI Pro picks for {date_str}: {len(fixtures)} fixtures (safe mode)...")
+        print(f"🧠 AI picks for {date_str}: {len(fixtures)} fixtures, max_matches={max_matches}...")
         clear_cache()
-        # AI Pro: safe picks — per-match 1.10-1.50
+        # Return top N matches sorted by confidence, odds 1.10-1.60
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
-            num_matches=4,
+            num_matches=max_matches,
             min_odds=1.10,
-            max_odds=1.50,
+            max_odds=1.60,
             sm_stats=sm_stats,
-            free_mode=False,  # Strict safety rules
+            free_mode=False,
         )
         result['date'] = date_str
 
