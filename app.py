@@ -510,6 +510,58 @@ def leagues():
         print(f"❌ Error in /api/leagues: {e}")
         return jsonify({'error': str(e), 'leagues': []}), 500
 
+@app.route('/api/register-token', methods=['POST'])
+def register_token():
+    """
+    Register a device FCM token for push notifications.
+    Called by the Flutter app on startup after requesting notification permission.
+
+    POST /api/register-token
+    Body: {"token": "<fcm_token>", "platform": "android"|"ios"}
+    """
+    try:
+        data = request.json or {}
+        token = (data.get('token') or '').strip()
+        platform = data.get('platform', 'unknown')
+
+        if not token:
+            return jsonify({'error': 'token is required'}), 400
+
+        from utils.push_notifier import register_token as _reg
+        success = _reg(token, platform)
+        if success:
+            return jsonify({'status': 'registered'})
+        return jsonify({'error': 'failed to register token'}), 500
+    except Exception as e:
+        print(f"❌ register-token error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/update-results', methods=['POST'])
+def update_results():
+    """
+    Manually trigger result resolution for recent picks.
+    Protected by CRON_SECRET Bearer token.
+
+    POST /api/update-results
+    Header: Authorization: Bearer <CRON_SECRET>
+    Body (optional): {"days_back": 3}
+    """
+    cron_secret = os.environ.get('CRON_SECRET', '')
+    auth_header = request.headers.get('Authorization', '')
+    if not cron_secret or auth_header != f'Bearer {cron_secret}':
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        from utils.result_updater import update_past_results
+        days_back = (request.json or {}).get('days_back', 3)
+        summary = update_past_results(sm_proxy, days_back=days_back)
+        return jsonify({'status': 'success', **summary})
+    except Exception as e:
+        print(f"❌ update-results error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/generate-daily', methods=['POST'])
 def generate_daily():
     """

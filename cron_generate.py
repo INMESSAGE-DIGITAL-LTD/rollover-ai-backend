@@ -46,7 +46,16 @@ def main():
     # Init SQLite for backup
     init_history_db()
 
-    # Run generator service (AI → market tracker → Firestore → cleanup)
+    # Step 1: Update results for the last 3 days before generating new picks.
+    # This marks past picks as won/lost so the app can show history and the
+    # market tracker has accurate data to penalise underperforming markets.
+    try:
+        from utils.result_updater import update_past_results
+        update_past_results(sm_proxy, days_back=3)
+    except Exception as e:
+        print(f"⚠️ Result updater failed (non-fatal): {e}")
+
+    # Step 2: Run generator service (AI → market tracker → Firestore → cleanup)
     result = generate_and_store(
         fixtures, predictor, stats_calculator, sm_stats,
         sm_proxy=sm_proxy,

@@ -283,9 +283,16 @@ Previously, `/api/fixtures/<date>` had the same `&filters=fixtureLeagues:{LEAGUE
 
 ---
 
-## What's Next (Roadmap)
+## Roadmap
 
-- [ ] Weekly model retraining script using recent SportMonks results
-- [ ] `Under 2.5 Goals` appearing in production picks (needs fixtures with combined avg goals < 2.0)
-- [ ] Result auto-updater: fetch FT scores and mark Firestore picks as won/lost
-- [ ] Push notifications when daily picks are generated
+| Item | Status | Notes |
+|------|--------|-------|
+| Under 2.5 Goals market | ✅ Done | Code complete. Appears automatically on days with low-scoring fixture profiles (combined avg goals < 2.0). |
+| Market diversity cap | ✅ Done | Max 3 picks of same market type per slip. Stops 8× DC(12) runs. |
+| H2H-aware DC(12) qualification | ✅ Done | DC(12) rejected when H2H draw rate ≥ 40%. |
+| Market performance tracker (pseudo-learning) | ✅ Done | Reads last 7 days of Firestore results, penalises losing markets before each generation. |
+| Result auto-updater | ✅ Done | `utils/result_updater.py` — runs nightly before each cron generation. Marks picks won/lost in Firestore. Manual trigger: `POST /api/update-results`. |
+| Push notifications | ✅ Done | `utils/push_notifier.py` — Firebase FCM. Fires after each successful generation. Register device tokens via `POST /api/register-token`. |
+| Model retraining workflow | ✅ Done (local) | `scripts/collect_recent_results.py` fetches last N days of results and appends to training CSV. Run locally, then retrain with `scripts/train.py` and push updated model `.json` files to GitHub. |
+| Result auto-updater visible in Flutter app | 🔜 Pending | Firestore picks now have `result: won/lost`. Flutter app needs to read and display win/loss badges on past picks. |
+| Full automated weekly retraining | 🔜 Pending | Requires moving pandas/sklearn into a separate training environment (not Render). Could use GitHub Actions on a weekly schedule. |

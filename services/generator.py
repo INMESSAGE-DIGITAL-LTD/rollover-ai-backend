@@ -108,6 +108,18 @@ def generate_and_store(
     db.collection('daily_predictions').document(today_str).set(doc_data)
     print(f"✅ Generator: Wrote to Firestore daily_predictions/{today_str}")
 
+    # Send push notification to all registered devices
+    try:
+        from utils.push_notifier import send_picks_ready
+        notif_result = send_picks_ready(
+            date_str=today_str,
+            match_count=len(matches),
+            combined_odds=slip.get('combined_odds', 0),
+        )
+        print(f"📲 Generator: Push notification sent to {notif_result.get('sent', 0)} device(s)")
+    except Exception as e:
+        print(f"⚠️ Generator: Push notification failed (non-fatal): {e}")
+
     # Cleanup old docs (> 7 days)
     _cleanup_old_predictions(db)
 
