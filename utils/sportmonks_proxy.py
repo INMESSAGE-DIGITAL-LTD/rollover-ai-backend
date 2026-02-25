@@ -183,36 +183,37 @@ class SportMonksProxy:
         return self._fetch_fixtures(date_str)
 
     def _fetch_fixtures(self, date_str):
-        """Fetch all fixtures for a date from SportMonks."""
+        """Fetch all fixtures for a date from SportMonks.
+        No league filter — returns all leagues the plan covers so the
+        Explore tab has a full match browser beyond the 10 curated picks."""
         try:
-            url = (
+            base_url = (
                 f"{SPORTMONKS_BASE}/fixtures/date/{date_str}"
                 f"?api_token={SPORTMONKS_TOKEN}"
                 f"&include=participants;scores;league"
-                f"&filters=fixtureLeagues:{LEAGUE_FILTER}"
-                f"&per_page=50"
+                f"&per_page=100"
             )
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                body = json.loads(resp.read().decode())
 
             fixtures = []
-            for event in body.get('data', []):
-                f = self._parse_live_fixture(event)
-                if f:
-                    fixtures.append(f)
+            page = 1
+            while page <= 5:  # cap at 5 pages (500 fixtures max)
+                url = base_url + (f"&page={page}" if page > 1 else "")
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    body = json.loads(resp.read().decode())
 
-            # Handle pagination
-            pagination = body.get('pagination', {})
-            if pagination.get('has_more'):
-                url2 = url + '&page=2'
-                req2 = urllib.request.Request(url2)
-                with urllib.request.urlopen(req2, timeout=20) as resp2:
-                    body2 = json.loads(resp2.read().decode())
-                for event in body2.get('data', []):
+                for event in body.get('data', []):
                     f = self._parse_live_fixture(event)
                     if f:
                         fixtures.append(f)
+
+                pagination = body.get('pagination', {})
+                has_more = pagination.get('has_more') or (
+                    pagination.get('current_page', page) < pagination.get('last_page', page)
+                )
+                if not has_more:
+                    break
+                page += 1
 
             result = {
                 'fixtures': fixtures,
