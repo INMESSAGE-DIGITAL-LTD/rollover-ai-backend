@@ -248,7 +248,15 @@ def picks_by_date(date_str):
 
         print(f"🧠 AI generating for {date_str} ({len(fixtures)} fixtures)...")
         clear_cache()
-        
+
+        # Apply market performance penalties for smarter on-demand generation
+        from utils.market_tracker import get_market_penalties
+        _mp = {}
+        try:
+            _mp = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
+        except Exception:
+            pass
+
         # Generate full 10 matches standard
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
@@ -257,6 +265,7 @@ def picks_by_date(date_str):
             max_odds=1.60,
             sm_stats=sm_stats,
             free_mode=False,
+            market_penalties=_mp,
         )
         
         # Save to Firestore for next time
@@ -345,6 +354,15 @@ def free_picks_by_date(date_str):
         print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
               f"odds 1.10-1.57, max 6 matches, combined 1.99-4.50")
         clear_cache()
+
+        # Apply market performance penalties
+        from utils.market_tracker import get_market_penalties
+        _free_mp = {}
+        try:
+            _free_mp = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
+        except Exception:
+            pass
+
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
             num_matches=6,
@@ -353,6 +371,7 @@ def free_picks_by_date(date_str):
             sm_stats=sm_stats,
             free_mode=False,  # Use strict safety rules
             exclude_match_markets=exclude_match_markets,
+            market_penalties=_free_mp,
         )
         result['date'] = date_str
 
