@@ -1,270 +1,242 @@
-# Rollover AI Multi-Market Prediction Backend
+# Rollover AI — Football Prediction Backend
 
-## 🎯 What This AI Predicts
-
-**14 Different Markets:**
-
-### Full Time Markets
-1. ✅ **FT Over 1.5** - Match will have 2+ total goals
-2. ❌ **FT Under 1.5** - Match will have 0-1 goals
-
-### Team-Specific Markets
-3. ✅ **Home Over 1.5** - Home team scores 2+ goals
-4. ❌ **Home Under 1.5** - Home team scores 0-1 goals
-5. ✅ **Away Over 1.5** - Away team scores 2+ goals
-6. ❌ **Away Under 1.5** - Away team scores 0-1 goals
-
-### Half Time Markets
-7. ✅ **HT Over 1.5** - 2+ goals by half time
-8. ❌ **HT Under 1.5** - 0-1 goals by half time
-
-### First/Second Half Markets
-9. ✅ **FH Over 0.5** - At least 1 goal in first half
-10. ❌ **FH Under 0.5** - No goals in first half
-11. ✅ **SH Over 0.5** - At least 1 goal in second half
-12. ❌ **SH Under 0.5** - No goals in second half
-
-### 0.5 Goals Markets
-13. ✅ **Home Over 0.5** - Home team scores at least 1
-14. ✅ **Away Over 0.5** - Away team scores at least 1
+> **Code repository:** GitHub (`vikcy112/rollover-ai-backend`)
+> **Live backend:** Render (`https://rollover-ai-backend.onrender.com`)
+> **Auto-deploy:** Every push to `main` is automatically deployed to Render.
 
 ---
 
-## 📁 Project Structure
+## Architecture
 
 ```
-rollover-backend/
-├── app.py                      # Flask API server
-├── config.py                   # Configuration & market definitions
-├── requirements.txt            # Python dependencies
+SportMonks API  →  XGBoost Models (24 markets)  →  Statistical Qualification
+                                                  →  H2H + Standings Context
+                                                  →  Market Performance Tracker
+                                                  →  Slip Builder (diversity cap)
+                                                  →  Firestore Storage
+                                                  →  Flutter App
+```
+
+### Three-Tab Model
+
+| Tab | Source | Safety | Markets | Odds |
+|-----|--------|--------|---------|------|
+| **Rollover** | 4-match rollover slip | Safest | Best composite score | 1.50–2.60 combined |
+| **AI Pro** | Firestore (cron-generated) | Safe | All markets, strict rules | 1.10–1.60 per pick |
+| **Free** | Live on-demand | Riskier | All markets, looser rules | 1.10–1.57 per pick |
+
+---
+
+## Prediction Engine
+
+### Markets Available (24+)
+
+**Goals markets:**
+- Over 0.5 / 1.5 / 2.5 / 3.5 Goals
+- **Under 2.5 Goals** *(newly added — catches defensive, low-scoring fixtures)*
+- Under 3.5 / 4.5 Goals
+- Both Teams to Score (BTTS Yes / No)
+
+**Team goals:**
+- Home Over 0.5 / 1.5 / 2.5 Goals
+- Away Over 0.5 / 1.5 / 2.5 Goals
+- Home to Score / Away to Score
+
+**Half-time goals:**
+- 1st Half Over 0.5 / Under 0.5
+- 2nd Half Over 0.5 / Under 0.5
+
+**Match result:**
+- Home Win / Away Win / Draw
+- Double Chance (1X) / Double Chance (X2) / Double Chance (12)
+
+### How the Score is Calculated
+
+Each candidate pick receives a **composite score**:
+
+```
+composite = edge × 0.40 + adjusted_probability × 0.35 + stability × 0.25
+
+where:
+  edge              = adjusted_prob − implied_prob (from bookmaker odds)
+  adjusted_prob     = XGBoost prediction blended with live team stats + H2H
+  stability         = how consistent both teams' recent form supports this market
+```
+
+Picks are ranked by composite score. The slip builder takes the top-scoring picks within the requested odds range, subject to the diversity cap.
+
+### Data Sources
+
+| Source | Used For |
+|--------|----------|
+| **SportMonks API v3** | Live fixture odds, team stats (last 10 games), H2H (last 5 games), league standings, live scores |
+| **XGBoost models** (24) | Base AI probability per market, trained on historical CSV data |
+| **Google Firestore** | Storing daily AI Pro predictions, reading past results for market tracker |
+| **Football-Data.org** | Fallback fixtures when SportMonks returns nothing |
+
+---
+
+## Smart Features
+
+### Market Diversity Cap
+The slip builder enforces a maximum of **3 picks of the same market type** per slip. This prevents the old behaviour of generating 8× Double Chance (12) picks.
+
+### H2H-Aware DC(12) Qualification
+Double Chance (12) predictions now check H2H draw history:
+- ≥ 40% H2H draw rate → prediction is **rejected** (too risky)
+- 25–40% H2H draw rate → probability boost is **reduced**
+
+This catches Kudrivka-type fixtures where both teams frequently draw.
+
+### Conservative Home/Away Over 0.5 Scoring
+The scored-in rate now uses the **average** of both teams, not the maximum. This prevents Brondby-type errors where the opponent's high away-scoring rate inflated confidence in the home team scoring.
+
+### Market Performance Tracker (Pseudo-Learning)
+Before each generation run, the system:
+1. Reads the last 7 days of Firestore predictions
+2. Fetches actual finished scores from SportMonks
+3. Calculates win rate per market type
+4. Applies composite score multipliers:
+
+| Win Rate | Multiplier | Effect |
+|----------|-----------|--------|
+| < 30% | × 0.40 | Strong penalty — market nearly avoided |
+| 30–50% | × 0.65 | Moderate penalty |
+| 50–60% | × 0.85 | Mild penalty |
+| 60–75% | × 1.00 | No change |
+| > 75% | × 1.05–1.15 | Small bonus |
+
+This means the model naturally avoids markets that have been losing recently and favours markets that have been winning — without full retraining.
+
+### Under 2.5 Goals
+Now evaluated as a real market. Qualification uses:
+- Combined average goals from both teams (lower = stronger signal)
+- Clean sheet rates
+- H2H under-goal rate (weighted 40% when ≥ 3 H2H matches available)
+
+---
+
+## Project Structure
+
+```
+rollover-ai-backend/
+├── app.py                          # Flask API (all endpoints)
+├── cron_generate.py                # Render cron worker (runs daily at 23:00 UTC)
+├── firebase_config.py              # Firestore client initialisation
+├── history.py                      # SQLite pick history routes
+├── requirements.txt
+│
 ├── models/
-│   ├── multi_market_predictor.py   # 14 XGBoost models
-│   └── trained/                    # Saved models (after training)
+│   ├── multi_market_predictor.py   # 24 XGBoost models wrapper
+│   └── trained/                    # Saved .pkl model files
+│
+├── services/
+│   └── generator.py                # Shared generation logic (used by app + cron)
+│
 ├── utils/
-│   └── label_generator.py      # Generate labels from historical data
-├── data/
-│   └── sample_matches.csv      # Training data
-└── scripts/
-    └── train.py                # Training script (TODO)
+│   ├── fixture_fetcher.py          # SportMonks fixture fetch + slip builder
+│   ├── sportmonks_proxy.py         # Cached SportMonks proxy (livescores, fixtures, leagues)
+│   ├── sportmonks_stats.py         # Team stats + H2H + standings fetch
+│   ├── stat_qualifier.py           # Statistical qualification + edge calculation + safety rules
+│   ├── market_tracker.py           # Market performance tracker (pseudo-learning)
+│   ├── team_stats.py               # CSV-based team stats fallback
+│   └── football_data_fallback.py   # Football-Data.org fallback fetcher
+│
+└── data/
+    └── raw/
+        └── all_matches.csv         # Historical training data
 ```
 
 ---
 
-## 🚀 Quick Start
+## API Endpoints
 
-### 1. Install Dependencies
+### Public
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Service info + model count |
+| `GET /health` | Health check |
+| `GET /api/picks/<date>` | AI Pro picks for a date (reads Firestore, generates on-demand if missing) |
+| `GET /api/free-picks/<date>` | Free tab picks (live generation, higher odds range) |
+| `GET /api/today` | Quick summary of today's picks |
+| `GET /api/livescores` | Live in-play scores (polled every 2 min) |
+| `GET /api/fixtures/<date>` | All available fixtures for a date (used by Explore tab) |
+| `GET /api/leagues` | All available leagues |
+| `GET /api/parlay` | Custom parlay builder |
+| `GET /api/history` | Past pick history |
+| `POST /api/predict` | Single-match prediction (all markets) |
+
+### Protected (CRON_SECRET required)
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/generate-daily` | Manual trigger: run AI + save to Firestore |
+
+---
+
+## Cron Schedule
+
+The Render cron job runs `cron_generate.py` daily:
+
+```
+Schedule: 0 23 * * *   (23:00 UTC = midnight WAT)
+```
+
+Each run:
+1. Fetches today's fixtures from SportMonks (filtered to 29 leagues)
+2. Runs `get_market_penalties()` — reads last 7 days of Firestore results
+3. Runs XGBoost + statistical qualification on all fixtures
+4. Writes top 10 picks to `Firestore → daily_predictions/{date}`
+5. Backs up to SQLite history
+6. Deletes Firestore docs older than 7 days
+
+---
+
+## Safety Rules (SAFETY_RULES)
+
+Per-market odds bounds used by the qualification engine. Picks outside these bounds are discarded regardless of AI probability.
+
+| Market | Min Odds | Sweet Max | Abs Max |
+|--------|----------|-----------|---------|
+| Double Chance (12) | 1.01 | 1.30 | 1.40 |
+| Home/Away Over 0.5 Goals | 1.05 | 1.40 | 1.50 |
+| Over 1.5 Goals | 1.10 | 1.45 | 1.57 |
+| Under 2.5 Goals | 1.30 | 1.60 | 1.70 |
+| Over 2.5 Goals | 1.20 | 1.50 | 1.60 |
+| Under 3.5 Goals | 1.20 | 1.55 | 1.60 |
+| Both Teams to Score | 1.25 | 1.50 | 1.57 |
+| Home Win / Away Win | 1.15 | 1.50 | 1.60 |
+
+---
+
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `SPORTMONKS_TOKEN` | SportMonks API v3 token |
+| `CRON_SECRET` | Bearer token for `/api/generate-daily` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to Firebase service account JSON |
+
+---
+
+## Deploying
+
+Push to `main` → Render auto-deploys in ~60 seconds.
+
 ```bash
-cd /Users/sanusi/Desktop/rollover-backend
-pip3 install -r requirements.txt
+git add .
+git commit -m "your change"
+git push origin main
 ```
 
-### 2. Download Historical Data
-```bash
-# Download last 3 seasons for top leagues
-# Using Football-Data.co.uk (FREE)
-curl -o data/epl_2324.csv http://www.football-data.co.uk/mmz4281/2324/E0.csv
-curl -o data/laliga_2324.csv http://www.football-data.co.uk/mmz4281/2324/SP1.csv
-# ... more leagues
-```
-
-### 3. Train Models
-```bash
-python3 scripts/train.py
-# This will:
-# - Load historical data
-# - Generate labels for all 14 markets
-# - Train 14 XGBoost models
-# - Save models to models/trained/
-```
-
-### 4. Start API
-```bash
-python3 app.py
-# API runs on http://localhost:5000
-```
-
-### 5. Test API
-```bash
-# Get all markets
-curl http://localhost:5000/api/markets
-
-# Get daily predictions
-curl http://localhost:5000/api/predictions/daily
-
-# Get optimized slip
-curl http://localhost:5000/api/predictions/slip
-```
+Render free tier cold-starts after 15 min of inactivity. The first request may take 30–60 seconds. The Flutter app handles this with a loading state.
 
 ---
 
-## 🔌 API Endpoints
+## What's Next (Roadmap)
 
-### `GET /`
-Health check
-
-### `GET /api/markets`
-List all 14 markets
-
-### `GET /api/predictions/daily`
-Get predictions for all matches today
-
-**Response:**
-```json
-{
-  "date": "2026-02-16",
-  "total_matches": 10,
-  "predictions": [
-    {
-      "match": "Man City vs Arsenal",
-      "home_team": "Man City",
-      "away_team": "Arsenal",
-      "league": "Premier League",
-      "kickoff": "2026-02-16T15:00:00Z",
-      "markets": {
-        "ft_over_15": {
-          "prediction": "YES",
-          "confidence": 0.85,
-          "odds": 1.30
-        },
-        "home_over_15": {
-          "prediction": "YES",
-          "confidence": 0.72,
-          "odds": 1.65
-        }
-        // ... all 14 markets
-      }
-    }
-  ]
-}
-```
-
-### `GET /api/predictions/slip`
-Get optimized accumulator (1-4 matches, total odds ≤ 2.10)
-
-**Response:**
-```json
-{
-  "date": "2026-02-16",
-  "matches": [
-    {
-      "match": "Man City vs Arsenal",
-      "market": "FT Over 1.5",
-      "confidence": 0.85,
-      "odds": 1.30
-    },
-    {
-      "match": "Bayern vs Dortmund",
-      "market": "Home Over 0.5",
-      "confidence": 0.90,
-      "odds": 1.15
-    }
-  ],
-  "total_odds": 1.50,
-  "combined_confidence": 0.77,
-  "expected_value": 1.15
-}
-```
-
-### `POST /api/predict`
-Predict all markets for a single match
-
-**Request:**
-```json
-{
-  "home_team": "Barcelona",
-  "away_team": "Real Madrid",
-  "home_gpg": 2.5,
-  "away_gpg": 2.0
-}
-```
-
-**Response:**
-```json
-{
-  "match": "Barcelona vs Real Madrid",
-  "predictions": {
-    "ft_over_15": 0.89,
-    "home_over_15": 0.75,
-    "fh_over_05": 0.85,
-    // ... all 14 markets
-  }
-}
-```
-
----
-
-## 📊 How the AI Learns
-
-### Training Data Format
-```csv
-Date,HomeTeam,AwayTeam,FTHG,FTAG,HTHG,HTAG
-18/08/2023,Man City,Arsenal,3,1,2,0
-```
-
-### Label Generation
-For each historical match, we create 14 binary labels:
-
-**Example: Man City 3-1 Arsenal (HT: 2-0)**
-- `ft_over_15` = 1 ✅ (4 total goals > 1.5)
-- `ft_under_15` = 0 ❌
-- `home_over_15` = 1 ✅ (Man City scored 3 > 1.5)
-- `home_under_15` = 0 ❌
-- ... etc
-
-### Model Architecture
-- **14 XGBoost models** (one per market)
-- Each trained on 10,000+ historical matches
-- Features: team form, goals, head-to-head, odds
-- Target accuracy: 70-75% per market
-
----
-
-## 🎓 Next Steps
-
-### ✅ Completed
-- ✅ Project structure created
-- ✅ Label generator built
-- ✅ Multi-market predictor ready
-- ✅ Flask API skeleton
-
-### 📋 TODO
-1. **Create training script** (`scripts/train.py`)
-2. **Download full historical data** (3-5 seasons)
-3. **Feature engineering** (calculate team stats)
-4. **Train all 14 models**
-5. **Integrate with The Odds API** (fetch today's matches)
-6. **Build slip optimization algorithm**
-7. **Deploy to Render**
-8. **Connect to Flutter app**
-
----
-
-## 💰 Cost Breakdown
-
-- Historical Data: **FREE** (Football-Data.co.uk)
-- Training: **FREE** (local computer)
-- The Odds API: **FREE** (500 requests/month)
-- Hosting: **FREE** (Render free tier)
-
-**Total: $0/month** ✅
-
----
-
-## 📞 Integration with Flutter
-
-```dart
-// In your Flutter app
-class PredictionService {
-  final String apiUrl = 'https://your-backend.com/api';
-  
-  Future<DailySlip> getDailySlip() async {
-    final response = await http.get('$apiUrl/predictions/slip');
-    return DailySlip.fromJson(json.decode(response.body));
-  }
-}
-```
-
----
-
-Ready to train the models! 🚀
-# v2.1 - Mixed Markets
+- [ ] Weekly model retraining script using recent SportMonks results
+- [ ] `Under 2.5 Goals` appearing in production picks (needs fixtures with combined avg goals < 2.0)
+- [ ] Result auto-updater: fetch FT scores and mark Firestore picks as won/lost
+- [ ] Push notifications when daily picks are generated
