@@ -123,6 +123,10 @@ AI_MARKET_FALLBACK = {
     'away_over_15': 'ft_over_15',
     'fh_under_05': 'fh_over_05',
     'sh_under_05': 'sh_over_05',
+    # Under 2.5 / 1.5 — use the closest trained under model
+    'ft_under_25': 'ft_under_35',   # Under 2.5 → Under 3.5 model (directionally correct)
+    'ft_under_35': 'ft_under_15',   # Under 3.5 → Under 1.5 model as last resort
+    'ft_under_15': 'ft_under_15',   # Already a base model (always available)
 }
 
 
@@ -539,11 +543,18 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             label = LINE_LABELS.get(point, f'Over {point} Goals')
             _try_add(label, odds, ai_market, line=point)
 
-            # Under market (3.5 and 4.5 are safe low-odds picks)
+            # Under markets — now includes Under 2.5 (key safer market for low-scoring fixtures)
             under_odds = line_data.get('under_odds', 0)
-            if under_odds > 0 and point >= 3.5:
+            if under_odds > 0 and point >= 2.5:
                 under_label = f'Under {point} Goals'
-                _try_add(under_label, under_odds, ai_market, line=point)
+                # Use a dedicated under model key so the fallback chain resolves correctly
+                if point == 2.5:
+                    under_ai_market = 'ft_under_25'
+                elif point == 3.5:
+                    under_ai_market = 'ft_under_35'
+                else:
+                    under_ai_market = 'ft_under_15'
+                _try_add(under_label, under_odds, under_ai_market, line=point)
 
         # === BTTS Yes ===
         btts_m = markets.get('btts', {})
@@ -788,15 +799,19 @@ def _empty_result(fixtures):
     }
 
 
-def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None, free_mode=False, exclude_matches=None, exclude_match_markets=None):
+def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None, free_mode=False, exclude_matches=None, exclude_match_markets=None, market_penalties=None):
     """
     Build a higher-odds parlay from ALL markets.
     User controls number of matches (2-20).
     Each match can use any market (1X2, BTTS, Over/Under, DC, etc.)
     Select matches with highest composite score within the odds range.
+
     exclude_matches: set of "HomeTeam_AwayTeam" keys to skip entirely.
     exclude_match_markets: set of "HomeTeam_AwayTeam_Market" keys to skip
         (allows same match with a different market).
+    market_penalties: dict of {market_label: multiplier} from market_tracker.
+        Markets with poor recent win rates get composite score penalties,
+        making the slip builder naturally avoid repeating losing markets.
     """
     match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats, free_mode=free_mode)
 
@@ -819,23 +834,50 @@ def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_
         ]
         print(f"   After excluding {len(exclude_match_markets)} match+market combos: {len(filtered)} options remain")
 
-    # Sort by composite score descending
+    # Apply market performance penalties (pseudo-learning from recent results)
+    if market_penalties:
+        for opt in filtered:
+            penalty = market_penalties.get(opt['market'], 1.0)
+            if penalty != 1.0:
+                opt['composite_score'] = opt.get('composite_score', 0) * penalty
+
+    # Sort by composite score descending (penalties already applied)
     filtered.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
 
     # Pick top num_matches unique matches (one market per match)
+    # Diversity cap: max 3 of the same market type per slip (avoids 10x DC(12))
     slip_matches = []
     combined_odds = 1.0
     used_matches = set()
+    market_type_count = {}
+    MAX_SAME_MARKET = 3
 
     for opt in filtered:
         match_key = f"{opt['home_team']}_{opt['away_team']}"
         if match_key in used_matches:
             continue
+        market_label = opt['market']
+        if market_type_count.get(market_label, 0) >= MAX_SAME_MARKET:
+            # This market type is saturated — skip to encourage diversity
+            continue
         slip_matches.append(opt)
         combined_odds *= opt['odds']
         used_matches.add(match_key)
+        market_type_count[market_label] = market_type_count.get(market_label, 0) + 1
         if len(slip_matches) >= num_matches:
             break
+
+    # If diversity cap caused us to fall short, relax it and fill remaining spots
+    if len(slip_matches) < num_matches:
+        for opt in filtered:
+            if len(slip_matches) >= num_matches:
+                break
+            match_key = f"{opt['home_team']}_{opt['away_team']}"
+            if match_key in used_matches:
+                continue
+            slip_matches.append(opt)
+            combined_odds *= opt['odds']
+            used_matches.add(match_key)
 
     return {
         'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),

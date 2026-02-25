@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from datetime import datetime
 from utils.fixture_fetcher import fetch_todays_fixtures
 from utils.sportmonks_stats import fetch_team_stats, fetch_h2h
+from utils.sportmonks_proxy import SportMonksProxy
 from models.multi_market_predictor import MultiMarketPredictor
 from utils.team_stats import TeamStatsCalculator
 from history import init_history_db, save_daily_picks
@@ -36,6 +37,7 @@ def main():
     predictor.load_models('models/trained')
     stats_calculator = TeamStatsCalculator('data/raw/all_matches.csv')
     sm_stats = _SmStatsProxy()
+    sm_proxy = SportMonksProxy()
     print("✅ Models loaded")
 
     # Fetch fixtures
@@ -44,9 +46,10 @@ def main():
     # Init SQLite for backup
     init_history_db()
 
-    # Run generator service (AI → Firestore → cleanup)
+    # Run generator service (AI → market tracker → Firestore → cleanup)
     result = generate_and_store(
         fixtures, predictor, stats_calculator, sm_stats,
+        sm_proxy=sm_proxy,
     )
 
     print(f"🎉 Cron complete: {result['message']}")

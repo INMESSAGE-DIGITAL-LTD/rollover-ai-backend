@@ -514,6 +514,7 @@ def generate_daily():
         fixtures = fetch_todays_fixtures()
         result = generate_and_store(
             fixtures, predictor, stats_calculator, sm_stats,
+            sm_proxy=sm_proxy,
         )
         status_code = 200 if result['status'] == 'success' else 200
         return jsonify(result), status_code

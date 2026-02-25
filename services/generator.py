@@ -22,6 +22,7 @@ def generate_and_store(
     min_odds=1.10,
     max_odds=1.60,
     save_sqlite_fn=None,
+    sm_proxy=None,
 ):
     """
     Run AI predictions on fixtures and write results to Firestore.
@@ -41,6 +42,7 @@ def generate_and_store(
     """
     from utils.sportmonks_stats import clear_cache
     from utils.fixture_fetcher import build_parlay_slip
+    from utils.market_tracker import get_market_penalties
 
     today_str = datetime.utcnow().strftime('%Y-%m-%d')
 
@@ -52,6 +54,18 @@ def generate_and_store(
             'message': 'No fixtures available for today.',
         }
 
+    # Analyse last 7 days of results to penalise underperforming markets.
+    # This is the pseudo-learning layer: the model won't blindly repeat a market
+    # that has lost ≥50% of picks in the past week.
+    market_penalties = {}
+    if sm_proxy is not None:
+        try:
+            market_penalties = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
+            if market_penalties:
+                print(f"📊 Generator: Applied market penalties for {len(market_penalties)} market(s)")
+        except Exception as e:
+            print(f"⚠️ Generator: Market tracker failed (non-fatal): {e}")
+
     # Run AI
     print(f"🧠 Generator: Running AI on {len(fixtures)} fixtures (max={num_matches})...")
     clear_cache()
@@ -62,6 +76,7 @@ def generate_and_store(
         max_odds=max_odds,
         sm_stats=sm_stats,
         free_mode=False,
+        market_penalties=market_penalties,
     )
 
     slip = result.get('slip', {})

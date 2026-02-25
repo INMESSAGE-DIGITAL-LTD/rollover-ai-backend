@@ -21,6 +21,8 @@ SAFETY_RULES = {
     'Over 3.5 Goals':       (1.50, 1.60, 1.60),
     'Under 4.5 Goals':      (1.10, 1.40, 1.57),
     'Under 3.5 Goals':      (1.20, 1.55, 1.60),
+    'Under 2.5 Goals':      (1.30, 1.60, 1.70),
+    'Under 1.5 Goals':      (1.50, 1.70, 1.80),
     'Home Win':             (1.15, 1.50, 1.60),
     'Away Win':             (1.15, 1.50, 1.60),
     'Both Teams to Score':  (1.25, 1.50, 1.57),
@@ -60,6 +62,8 @@ FREE_SAFETY_RULES = {
     'Over 3.5 Goals':       (1.60, 2.50, 3.50),
     'Under 4.5 Goals':      (1.10, 1.50, 2.00),
     'Under 3.5 Goals':      (1.20, 1.80, 2.50),
+    'Under 2.5 Goals':      (1.30, 2.00, 2.80),
+    'Under 1.5 Goals':      (1.60, 2.20, 3.00),
     'Home Win':             (1.30, 2.00, 3.00),
     'Away Win':             (1.30, 2.00, 3.00),
     'Both Teams to Score':  (1.40, 2.00, 3.00),
@@ -205,6 +209,8 @@ def _qualify_by_market(label, ai_prob, implied_prob, home, away, h2h):
         return _qualify_away_win(ai_prob, implied_prob, home, away, h2h)
     elif lab == 'draw':
         return _qualify_draw(ai_prob, implied_prob, home, away, h2h)
+    elif 'under 2.5' in lab or 'under 1.5' in lab:
+        return _qualify_under_tight(ai_prob, implied_prob, home, away, h2h)
     elif 'under 4.5' in lab or 'under 3.5' in lab:
         return _qualify_under(ai_prob, implied_prob, home, away)
     elif lab == 'btts no':
@@ -212,7 +218,8 @@ def _qualify_by_market(label, ai_prob, implied_prob, home, away, h2h):
     elif 'both teams' in lab:
         return _qualify_btts(ai_prob, implied_prob, home, away, h2h)
     elif 'double chance' in lab or 'home or draw' in lab or 'draw or away' in lab or 'home or away' in lab:
-        return _qualify_double_chance(label, ai_prob, implied_prob, home, away)
+        # Pass h2h so DC(12) can penalise draw-prone fixtures
+        return _qualify_double_chance(label, ai_prob, implied_prob, home, away, h2h)
     else:
         # Generic: small boost if AI says so
         if home is None or away is None:
@@ -267,10 +274,15 @@ def _qualify_over05(ai_prob, implied, home, away):
 
 
 def _qualify_team_goals(ai_prob, implied, home, away):
-    """Home/Away to score, 1H/2H goals."""
+    """Home/Away to score, 1H/2H goals.
+    Uses the AVERAGE scored-in rate (not max) to avoid over-optimism when
+    one team scores frequently but the other doesn't — e.g. Brondby 0-0 cases.
+    """
     if home is None or away is None:
         return max(ai_prob, implied + 0.03)
-    score_rate = max(home['scored_in_rate'], away['scored_in_rate'])
+    # Average is more conservative and avoids being misled by the away team's
+    # scoring rate when predicting Home Over 0.5 Goals (and vice-versa).
+    score_rate = (home['scored_in_rate'] + away['scored_in_rate']) / 2.0
     blended = ai_prob * 0.55 + score_rate * 0.25 + implied * 0.20
     return min(0.93, max(blended, implied + 0.02))
 
@@ -289,6 +301,36 @@ def _qualify_under(ai_prob, implied, home, away):
     stats_prob = defense_factor * 0.40 + clean_factor * 0.20 + 0.30
     blended = ai_prob * 0.45 + stats_prob * 0.30 + implied * 0.25
     return min(0.95, max(blended, implied + 0.02))
+
+
+def _qualify_under_tight(ai_prob, implied, home, away, h2h):
+    """Under 2.5 / Under 1.5 Goals — needs strong defensive evidence.
+
+    Requires low combined scoring average AND H2H support when available.
+    This is the market the model was missing — it now catches Brondby-type
+    fixtures where both teams rarely score many goals.
+    """
+    if home is None or away is None:
+        return max(ai_prob, implied + 0.03)
+
+    combined = home['avg_goals_scored'] + away['avg_goals_scored']
+
+    # Defense factor: higher when combined avg < 2.0 (tight games)
+    defense_factor = 1.0 - min(1.0, combined / 3.5)
+    clean_factor = (home.get('clean_sheet_rate', 0.3) + away.get('clean_sheet_rate', 0.3)) / 2.0
+
+    # Base stats probability — requires stronger signal than Under 3.5
+    stats_prob = defense_factor * 0.45 + clean_factor * 0.30 + 0.15
+
+    # H2H is very informative for tight under markets — weight it heavily
+    if h2h and h2h.get('total_matches', 0) >= 3:
+        h2h_under25_rate = 1.0 - (h2h.get('over25_count', 0) / h2h['total_matches'])
+        # Blend H2H rate prominently (40%)
+        stats_prob = stats_prob * 0.60 + h2h_under25_rate * 0.40
+
+    # Trust AI model less here (it was not trained on Under 2.5 explicitly)
+    blended = ai_prob * 0.40 + stats_prob * 0.35 + implied * 0.25
+    return min(0.92, max(blended, implied + 0.02))
 
 
 def _qualify_home_win(ai_prob, implied, home, away, h2h):
@@ -378,7 +420,7 @@ def _qualify_btts_no(ai_prob, implied, home, away, h2h):
     return min(0.75, max(blended, implied + 0.02))
 
 
-def _qualify_double_chance(label, ai_prob, implied, home, away):
+def _qualify_double_chance(label, ai_prob, implied, home, away, h2h=None):
     if home is None or away is None:
         return max(ai_prob, implied + 0.04)
 
@@ -392,7 +434,30 @@ def _qualify_double_chance(label, ai_prob, implied, home, away):
             return implied * 0.97
         return min(0.95, (1.0 - away.get('away_loss_rate', 0.5)) * 0.25 + implied * 0.30 + ai_prob * 0.25 + 0.10)
     else:
-        # Double Chance (12) — only draw loses, very safe
+        # Double Chance (12) — only draw loses.
+        # CRITICAL: Check H2H draw rate first. Teams that draw frequently make
+        # DC(12) unreliable — Kudrivka 2-2 type scenarios.
+        if h2h and h2h.get('total_matches', 0) >= 3:
+            draw_count = (
+                h2h['total_matches']
+                - h2h.get('team1_wins', 0)
+                - h2h.get('team2_wins', 0)
+            )
+            h2h_draw_rate = draw_count / h2h['total_matches']
+            if h2h_draw_rate >= 0.40:
+                # These teams draw very often — DC(12) is risky, reject
+                return implied * 0.95
+            if h2h_draw_rate >= 0.25:
+                # Moderate draw risk — apply reduced boost (0.03 not 0.06)
+                draw_unlikely = (
+                    home['home_win_rate'] >= 0.40
+                    or away.get('away_loss_rate', 0.5) >= 0.40
+                )
+                if draw_unlikely:
+                    return min(0.95, implied + 0.03)
+                return min(0.93, implied + 0.02)
+
+        # Standard path: safe if either team has high home-win / away-loss rate
         draw_unlikely = (home['home_win_rate'] >= 0.40 or away.get('away_loss_rate', 0.5) >= 0.40)
         if draw_unlikely:
             return min(0.96, implied + 0.06)
@@ -433,6 +498,12 @@ def _compute_stability(market_label, home, away):
 
     if lab == 'draw':
         return 0.40  # Draws are inherently less stable/predictable
+
+    if 'under 2.5' in lab or 'under 1.5' in lab:
+        # Tight under markets need strong clean sheet + low scoring support
+        clean = (home.get('clean_sheet_rate', 0.3) + away.get('clean_sheet_rate', 0.3)) / 2.0
+        low_scoring = 1.0 - min(1.0, (home['avg_goals_scored'] + away['avg_goals_scored']) / 3.0)
+        return clean * 0.55 + low_scoring * 0.45
 
     if 'under' in lab and 'goal' in lab:
         clean = (home.get('clean_sheet_rate', 0.3) + away.get('clean_sheet_rate', 0.3)) / 2.0
