@@ -17,13 +17,16 @@ SportMonks API  →  XGBoost Models (24 markets)  →  Statistical Qualification
                                                   →  Flutter App
 ```
 
-### Three-Tab Model
+### Four-Tab Model
 
-| Tab | Source | Safety | Markets | Odds |
-|-----|--------|--------|---------|------|
-| **Rollover** | 4-match rollover slip | Safest | Best composite score | 1.50–2.60 combined |
-| **AI Pro** | Firestore (cron-generated) | Safe | All markets, strict rules | 1.10–1.60 per pick |
-| **Free** | Live on-demand | Riskier | All markets, looser rules | 1.10–1.57 per pick |
+| Tab | Backend Endpoint | Source | Purpose |
+|-----|-----------------|--------|---------|
+| **Rollover** | `GET /api/today` or rollover slip | Firestore / live | Safest 4-match accumulator |
+| **AI Pro** | `GET /api/picks/<date>` | Firestore (cron-generated nightly) | Up to 10 AI-curated picks, strict safety |
+| **Free** | `GET /api/free-picks/<date>` | Live on-demand | 6 riskier teaser picks, higher odds |
+| **Explore** | `GET /api/fixtures/<date>` | SportMonks (all leagues, no filter) | Full match browser — every game available |
+
+> The **Explore tab is intentionally separate** from the curated picks tabs. It shows the full universe of available fixtures so users can browse any match — not just the 10 the AI selected. Matches already shown in AI Pro or Free tabs are excluded from Explore to avoid duplication.
 
 ---
 
@@ -161,7 +164,7 @@ rollover-ai-backend/
 | `GET /api/free-picks/<date>` | Free tab picks (live generation, higher odds range) |
 | `GET /api/today` | Quick summary of today's picks |
 | `GET /api/livescores` | Live in-play scores (polled every 2 min) |
-| `GET /api/fixtures/<date>` | All available fixtures for a date (used by Explore tab) |
+| `GET /api/fixtures/<date>` | **Explore tab** — all available fixtures (no league filter, paginated) |
 | `GET /api/leagues` | All available leagues |
 | `GET /api/parlay` | Custom parlay builder |
 | `GET /api/history` | Past pick history |
@@ -231,6 +234,52 @@ git push origin main
 ```
 
 Render free tier cold-starts after 15 min of inactivity. The first request may take 30–60 seconds. The Flutter app handles this with a loading state.
+
+---
+
+## Explore Tab — Full Match Browser
+
+The Explore tab is the fourth tab in the Flutter app. Unlike the other tabs which show only the AI-curated picks, Explore gives users a **full match browser** — every fixture SportMonks returns for the selected date, minus the games already shown in AI Pro / Free tabs.
+
+### How it works (end-to-end)
+
+```
+Flutter ExploreController
+  └─ RolloverBackendService.fetchFixtures(dateStr)
+       └─ GET /api/fixtures/<date>                 ← Render (app.py)
+            └─ SportMonksProxy.get_fixtures()       ← sportmonks_proxy.py
+                 └─ SportMonks /fixtures/date/<date>
+                      ├─ No league filter (all leagues returned)
+                      ├─ 100 results per page
+                      └─ Up to 5 pages (500 fixtures max)
+```
+
+### Key difference from AI Pro / Free picks
+
+| | AI Pro & Free | Explore |
+|-|--------------|---------|
+| **Endpoint** | `/api/picks` / `/api/free-picks` | `/api/fixtures/<date>` |
+| **League filter** | Yes — 29 specific leagues (`LEAGUE_FILTER`) | **None** — all leagues the SportMonks plan covers |
+| **Odds required** | Yes — picks need bookmaker odds to pass qualification | No — raw fixture data, no odds needed |
+| **AI analysis** | Full XGBoost + statistical qualification | None — raw match listing only |
+| **Pagination** | Single page (≤ 50) | Up to 5 pages (up to 500 fixtures) |
+| **Caching** | 10 min in-memory | 10 min in-memory (same proxy cache) |
+| **Flutter cache** | None | `GetStorage('explore_cache')` by date |
+
+### What the Flutter app does with it
+
+The `ExploreController` in the Flutter app:
+1. Fetches all fixtures from `/api/fixtures/<date>`
+2. Calls `FixtureToExplore.convertAll()` to parse them into `ExploreMatch` objects
+3. Runs `_excludeCuratedPicks()` — removes any match already shown in AI Pro or Free tabs (matched by home team + away team name)
+4. Displays the remaining matches grouped by league, top leagues first
+5. Supports: date navigation (today + 7 days back), market filter (All / Over 1.5 / BTTS / Live / etc.), team/league search, league grouping
+
+### Why Explore was empty (fixed)
+
+Previously, `/api/fixtures/<date>` had the same `&filters=fixtureLeagues:{LEAGUE_FILTER}` restriction as the picks endpoint. On quiet days (e.g. mid-week), this returned exactly the same 10 fixtures as the AI picks — so `_excludeCuratedPicks()` removed all of them, leaving Explore blank.
+
+**Fix applied:** `sportmonks_proxy.py → _fetch_fixtures()` now has no league filter and fetches up to 500 fixtures across all available leagues. Weekend days typically return 80–150 fixtures; after excluding 10 AI picks, Explore shows 70–140 matches.
 
 ---
 
