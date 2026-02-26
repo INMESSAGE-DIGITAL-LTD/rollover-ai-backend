@@ -216,6 +216,9 @@ def update_past_results(proxy, days_back=3):
                         try:
                             from datetime import datetime as dt
                             kickoff = dt.fromisoformat(kickoff_str.replace('Z', '+00:00'))
+                            # Make naive datetimes UTC-aware so the subtraction works
+                            if kickoff.tzinfo is None:
+                                kickoff = kickoff.replace(tzinfo=timezone.utc)
                             age_hours = (datetime.now(timezone.utc) - kickoff).total_seconds() / 3600
                             if age_hours > 2.5:
                                 updated['result'] = 'void'
