@@ -15,8 +15,19 @@ services:
     name: rollover-daily-predictions
     env: python
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    schedule: "0 23 * * *"
+    schedule: "5 0 * * *"
     startCommand: python cron_generate.py
+    plan: standard
+    envVars:
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+
+  - type: cron
+    name: rollover-update-results
+    env: python
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    schedule: "30 23 * * *"
+    startCommand: python cron_update_results.py
     plan: standard
     envVars:
       - key: FIREBASE_SERVICE_ACCOUNT
