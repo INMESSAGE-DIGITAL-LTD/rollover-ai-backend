@@ -169,7 +169,12 @@ def update_past_results(proxy, days_back=3):
                 continue
 
             # Check if all picks are already resolved — skip early
-            pending = [m for m in matches if m.get('result', 'pending') == 'pending']
+            # result may be stored as None (not yet set) or 'pending'
+            def _is_pending(m):
+                r = m.get('result')
+                return r is None or r == 'pending'
+
+            pending = [m for m in matches if _is_pending(m)]
             if not pending:
                 print(f"  ✅ {date_str}: all picks already resolved")
                 continue
@@ -183,7 +188,7 @@ def update_past_results(proxy, days_back=3):
 
             for match in matches:
                 # Already resolved — leave it alone
-                if match.get('result', 'pending') != 'pending':
+                if not _is_pending(match):
                     updated_matches.append(match)
                     continue
 
@@ -202,18 +207,21 @@ def update_past_results(proxy, days_back=3):
                         updated['actual_away_score'] = away_score
                     day_updated += 1
                 else:
-                    # Score not found or market undeterminable (half-time etc.)
-                    # Mark void only if the game should be finished by now
-                    # (kickoff was > 2.5 hours ago)
+                    # Score not found OR market undeterminable (e.g. half-time markets).
+                    # Void if the game should be well and truly finished by now (> 2.5h).
+                    # Use score found (not None) OR age as the signal — don't require
+                    # home_score to be None, since we may have FT score but not HT score.
                     kickoff_str = match.get('kickoff', '')
                     if kickoff_str:
                         try:
                             from datetime import datetime as dt
                             kickoff = dt.fromisoformat(kickoff_str.replace('Z', '+00:00'))
                             age_hours = (datetime.now(timezone.utc) - kickoff).total_seconds() / 3600
-                            if age_hours > 2.5 and home_score is None:
-                                # Game should be over but score not found — void
+                            if age_hours > 2.5:
                                 updated['result'] = 'void'
+                                if home_score is not None:
+                                    updated['actual_home_score'] = home_score
+                                    updated['actual_away_score'] = away_score
                                 day_errors += 1
                         except Exception:
                             pass
@@ -221,10 +229,10 @@ def update_past_results(proxy, days_back=3):
                 updated_matches.append(updated)
 
             # Always recalculate summary so the app can show win/loss badges
-            resolved = [m for m in updated_matches if m.get('result', 'pending') not in ('pending',)]
+            resolved = [m for m in updated_matches if not _is_pending(m)]
             wins = sum(1 for m in resolved if m.get('result') == 'won')
             losses = sum(1 for m in resolved if m.get('result') == 'lost')
-            still_pending = [m for m in updated_matches if m.get('result', 'pending') == 'pending']
+            still_pending = [m for m in updated_matches if _is_pending(m)]
 
             if day_updated > 0 or day_errors > 0:
                 # New results resolved this run — write full match list + summary
