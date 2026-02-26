@@ -547,7 +547,7 @@ def update_results():
     Header: Authorization: Bearer <CRON_SECRET>
     Body (optional): {"days_back": 3}
     """
-    cron_secret = os.environ.get('CRON_SECRET', '')
+    cron_secret = os.environ.get('CRON_SECRET', '').strip()
     auth_header = request.headers.get('Authorization', '')
     if not cron_secret or auth_header != f'Bearer {cron_secret}':
         return jsonify({'error': 'Unauthorized'}), 401
@@ -574,7 +574,7 @@ def generate_daily():
     Header: Authorization: Bearer <CRON_SECRET>
     """
     # ── Auth check ──
-    cron_secret = os.environ.get('CRON_SECRET', '')
+    cron_secret = os.environ.get('CRON_SECRET', '').strip()
     auth_header = request.headers.get('Authorization', '')
     if not cron_secret or auth_header != f'Bearer {cron_secret}':
         return jsonify({'error': 'Unauthorized'}), 401
