@@ -21,39 +21,39 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Use a PAT so the push step can trigger Render auto-deploy
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip'
 
       - name: Install ML dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas numpy scikit-learn "xgboost>=2.0.0,<3.0.0"
+          pip install pandas numpy "scikit-learn>=1.3.0" "xgboost>=2.0.0,<3.0.0"
 
-      # Optional: write Firebase credentials so any script that imports
-      # firebase_config can find them (not required for collect/train).
+      # Write Firebase credentials via env var (safe for JSON with any characters)
       - name: Write Firebase service account
-        if: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
+        if: env.FIREBASE_SA != ''
+        env:
+          FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' > /tmp/firebase_sa.json
+          printf '%s' "$FIREBASE_SA" > /tmp/firebase_sa.json
           echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/firebase_sa.json" >> $GITHUB_ENV
 
       - name: Collect recent match results from SportMonks
+        continue-on-error: true
         env:
           SPORTMONKS_TOKEN: ${{ secrets.SPORTMONKS_API_KEY }}
         run: |
           DAYS="${{ github.event.inputs.days || '30' }}"
-          echo "📥 Collecting last $DAYS days of results…"
+          echo "Collecting last $DAYS days of results..."
           python scripts/collect_recent_results.py --days "$DAYS"
 
       - name: Retrain XGBoost models
         run: |
-          echo "🧠 Retraining models…"
+          echo "Retraining models..."
           cd scripts && python train.py
 
       - name: Check for changes
@@ -62,10 +62,10 @@ jobs:
           git add models/trained/ data/raw/all_matches.csv
           if git diff --cached --quiet; then
             echo "changed=false" >> $GITHUB_OUTPUT
-            echo "✅ No model or data changes — skipping commit."
+            echo "No model or data changes — skipping commit."
           else
             echo "changed=true" >> $GITHUB_OUTPUT
-            echo "📦 Changes detected — will commit."
+            echo "Changes detected — will commit."
           fi
 
       - name: Commit updated models and data
