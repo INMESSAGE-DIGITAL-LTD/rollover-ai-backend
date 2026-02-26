@@ -33,14 +33,19 @@ jobs:
           pip install --upgrade pip
           pip install pandas numpy "scikit-learn>=1.3.0" "xgboost>=2.0.0,<3.0.0"
 
-      # Write Firebase credentials via env var (safe for JSON with any characters)
+      # Write Firebase credentials — check done in shell, not YAML if:
+      # (secrets context is not available in GitHub Actions if: expressions)
       - name: Write Firebase service account
-        if: env.FIREBASE_SA != ''
         env:
           FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
-          printf '%s' "$FIREBASE_SA" > /tmp/firebase_sa.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/firebase_sa.json" >> $GITHUB_ENV
+          if [ -n "$FIREBASE_SA" ]; then
+            printf '%s' "$FIREBASE_SA" > /tmp/firebase_sa.json
+            echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/firebase_sa.json" >> $GITHUB_ENV
+            echo "Firebase credentials written."
+          else
+            echo "FIREBASE_SERVICE_ACCOUNT secret not set — skipping."
+          fi
 
       - name: Collect recent match results from SportMonks
         continue-on-error: true
