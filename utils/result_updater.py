@@ -82,17 +82,44 @@ def _determine_result(home_score, away_score, market):
     return None
 
 
+def _normalize_name(name):
+    """Normalise a team name for fuzzy matching."""
+    import unicodedata
+    # Lowercase, strip, replace hyphens/underscores with space
+    n = name.lower().strip().replace('-', ' ').replace('_', ' ')
+    # Remove accents (e.g. é → e)
+    n = ''.join(
+        c for c in unicodedata.normalize('NFD', n)
+        if unicodedata.category(c) != 'Mn'
+    )
+    # Collapse multiple spaces
+    n = ' '.join(n.split())
+    return n
+
+
+def _names_match(a, b):
+    """True if two team names are the same after normalisation, or one
+    contains the other (handles 'Paris Saint-Germain' vs 'PSG' etc.)."""
+    na, nb = _normalize_name(a), _normalize_name(b)
+    if na == nb:
+        return True
+    # One is a substring of the other (min 4 chars to avoid false positives)
+    if len(na) >= 4 and len(nb) >= 4:
+        if na in nb or nb in na:
+            return True
+    return False
+
+
 def _find_score(fixtures_data, home_team, away_team):
-    """Match a prediction to a finished fixture by team name, return (h, a)."""
+    """Match a prediction to a finished fixture by team name, return (h, a).
+    Uses normalised fuzzy matching so hyphen/accent/abbreviation differences
+    between stored names and SportMonks names don't cause misses."""
     if not fixtures_data:
         return None, None
 
-    home_lower = home_team.lower().strip()
-    away_lower = away_team.lower().strip()
-
     for fix in fixtures_data.get('fixtures', []):
-        if (fix.get('home_team', '').lower().strip() == home_lower and
-                fix.get('away_team', '').lower().strip() == away_lower):
+        if (_names_match(fix.get('home_team', ''), home_team) and
+                _names_match(fix.get('away_team', ''), away_team)):
             status = fix.get('match_status', '')
             h = fix.get('home_score')
             a = fix.get('away_score')
@@ -193,19 +220,20 @@ def update_past_results(proxy, days_back=3):
 
                 updated_matches.append(updated)
 
-            # Only write back if something changed
-            if day_updated > 0 or day_errors > 0:
-                # Recalculate slip-level win/loss summary
-                resolved = [m for m in updated_matches if m.get('result', 'pending') != 'pending']
-                wins = sum(1 for m in resolved if m.get('result') == 'won')
-                losses = sum(1 for m in resolved if m.get('result') == 'lost')
+            # Always recalculate summary so the app can show win/loss badges
+            resolved = [m for m in updated_matches if m.get('result', 'pending') not in ('pending',)]
+            wins = sum(1 for m in resolved if m.get('result') == 'won')
+            losses = sum(1 for m in resolved if m.get('result') == 'lost')
+            still_pending = [m for m in updated_matches if m.get('result', 'pending') == 'pending']
 
+            if day_updated > 0 or day_errors > 0:
+                # New results resolved this run — write full match list + summary
                 ref.update({
                     'matches': updated_matches,
                     'results_summary': {
                         'wins': wins,
                         'losses': losses,
-                        'pending': len([m for m in updated_matches if m.get('result', 'pending') == 'pending']),
+                        'pending': len(still_pending),
                         'void': len([m for m in updated_matches if m.get('result') == 'void']),
                         'slip_result': 'won' if losses == 0 and wins > 0 else ('lost' if losses > 0 else 'pending'),
                     },
@@ -215,6 +243,20 @@ def update_past_results(proxy, days_back=3):
                       f"({wins}W / {losses}L) | {day_errors} void")
                 total_updated += day_updated
                 total_errors += day_errors
+            elif resolved:
+                # Nothing new this run but some picks already resolved —
+                # ensure results_summary is written (may have been missing)
+                ref.update({
+                    'results_summary': {
+                        'wins': wins,
+                        'losses': losses,
+                        'pending': len(still_pending),
+                        'void': len([m for m in updated_matches if m.get('result') == 'void']),
+                        'slip_result': 'won' if losses == 0 and wins > 0 else ('lost' if losses > 0 else 'pending'),
+                    },
+                    'results_updated_at': __import__('datetime').datetime.utcnow().isoformat(),
+                })
+                print(f"  📅 {date_str}: summary synced ({wins}W / {losses}L / {len(still_pending)} pending)")
             else:
                 print(f"  ⏳ {date_str}: {len(pending)} picks still pending "
                       f"(scores not available yet)")
