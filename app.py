@@ -59,20 +59,6 @@ def home():
 def health():
     return jsonify({"status": "healthy", "models": len(predictor.models)})
 
-@app.route('/api/debug-auth')
-def debug_auth():
-    """Temporary: diagnose CRON_SECRET env var and auth header. Remove after fix."""
-    secret = os.environ.get('CRON_SECRET', '')
-    auth = request.headers.get('Authorization', '')
-    return jsonify({
-        "secret_set": bool(secret),
-        "secret_length": len(secret),
-        "secret_stripped_length": len(secret.strip()),
-        "auth_header_received": bool(auth),
-        "auth_header_length": len(auth),
-        "match": auth == f'Bearer {secret.strip()}',
-    })
-
 @app.route('/api/predict', methods=['POST'])
 def predict():
     """
