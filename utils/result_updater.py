@@ -99,14 +99,28 @@ def _normalize_name(name):
 
 def _names_match(a, b):
     """True if two team names are the same after normalisation, or one
-    contains the other (handles 'Paris Saint-Germain' vs 'PSG' etc.)."""
+    contains the other, or they share ≥2 significant tokens.
+
+    Handles:
+      'Paris Saint German' vs 'Paris Saint-Germain'  → token overlap
+      'PSG' vs 'Paris Saint-Germain'                 → substring (psg in …)
+      'AS Monaco' vs 'Monaco'                        → substring
+    """
     na, nb = _normalize_name(a), _normalize_name(b)
     if na == nb:
         return True
-    # One is a substring of the other (min 4 chars to avoid false positives)
+    # Substring check (min 4 chars each to avoid false positives)
     if len(na) >= 4 and len(nb) >= 4:
         if na in nb or nb in na:
             return True
+    # Token overlap: if ≥2 words of length ≥4 are shared → same club.
+    # Catches "paris saint german" vs "paris saint germain" where the
+    # final token differs by one character ("german" ≠ "germain") but
+    # "paris" and "saint" both match.
+    tokens_a = {w for w in na.split() if len(w) >= 4}
+    tokens_b = {w for w in nb.split() if len(w) >= 4}
+    if tokens_a and tokens_b and len(tokens_a & tokens_b) >= 2:
+        return True
     return False
 
 
