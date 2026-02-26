@@ -45,7 +45,7 @@ def get_history(days=7):
                     "away_team": m.get("away_team", ""),
                     "market": m.get("market", ""),
                     "odds": float(m.get("odds", 0)),
-                    "confidence": float(m.get("confidence", 0) or m.get("ai_probability", 0)),
+                    "confidence": float(m.get("ai_probability", 0) or 0),
                     "result": m.get("result", "pending"),
                     "league": m.get("league", ""),
                     "home_logo": m.get("home_logo"),
