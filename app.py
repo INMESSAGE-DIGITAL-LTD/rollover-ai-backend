@@ -556,10 +556,10 @@ def update_results():
         from utils.result_updater import update_past_results
         days_back = (request.json or {}).get('days_back', 3)
         summary = update_past_results(sm_proxy, days_back=days_back)
-        return jsonify({'status': 'success', **summary})
+        return jsonify({'status': 'success', 'code_version': 'v5', **summary})
     except Exception as e:
         print(f"❌ update-results error: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'code_version': 'v5'}), 500
 
 
 @app.route('/api/generate-daily', methods=['POST'])
