@@ -138,21 +138,28 @@ class SportMonksProxy:
         league_logo = league_data.get('image_path', '')
         league_country = (league_data.get('country') or {}).get('name', '')
 
-        # Parse scores
+        # Parse scores — prefer CURRENT (live/final), fall back to 2ND_HALF
         home_score = None
         away_score = None
         scores = event.get('scores', [])
+        # Priority: CURRENT > 2ND_HALF > FULLTIME (for finished games from date endpoint)
+        score_priority = {'CURRENT': 0, '2ND_HALF': 1, 'FULLTIME': 2}
+        best_priority = {}  # participant -> best priority seen
         for s in scores:
             desc = s.get('description', '')
             score_data = s.get('score', {})
             participant = score_data.get('participant', '')
             goals = score_data.get('goals')
-            if desc == 'CURRENT' and goals is not None:
-                g = int(goals) if isinstance(goals, int) else int(goals)
+            if desc not in score_priority or goals is None:
+                continue
+            priority = score_priority[desc]
+            if participant not in best_priority or priority < best_priority[participant]:
+                g = int(goals)
                 if participant == 'home':
                     home_score = g
                 elif participant == 'away':
                     away_score = g
+                best_priority[participant] = priority
 
         return {
             'id': event.get('id'),
