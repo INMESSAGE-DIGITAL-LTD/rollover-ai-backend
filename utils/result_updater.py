@@ -14,8 +14,15 @@ left untouched so results are never overwritten.
 from datetime import datetime, timedelta, timezone
 
 
-def _determine_result(home_score, away_score, market):
-    """Return 'won', 'lost', or None (undeterminable from FT score)."""
+def _extract_goal_line(market):
+    """Extract the numeric goal line from a market string, e.g. '1st Half Over 0.5' → 0.5."""
+    import re
+    match = re.search(r'(\d+\.?\d*)', market)
+    return float(match.group(1)) if match else 0.5
+
+
+def _determine_result(home_score, away_score, market, ht_home_score=None, ht_away_score=None):
+    """Return 'won', 'lost', or None (undeterminable)."""
     if home_score is None or away_score is None:
         return None
 
@@ -78,7 +85,27 @@ def _determine_result(home_score, away_score, market):
     if m == 'away over 2.5 goals':
         return 'won' if away_score >= 3 else 'lost'
 
-    # Half-time markets can't be determined from FT score
+    # Half-time markets — need HT scores
+    if '1st half' in m:
+        if ht_home_score is None or ht_away_score is None:
+            return None  # HT score data not available yet
+        ht_total = ht_home_score + ht_away_score
+        if 'over' in m:
+            return 'won' if ht_total > _extract_goal_line(m) else 'lost'
+        if 'under' in m:
+            return 'won' if ht_total < _extract_goal_line(m) else 'lost'
+        return None
+
+    if '2nd half' in m:
+        if ht_home_score is None or ht_away_score is None:
+            return None  # HT score data not available yet
+        h2_total = (home_score - ht_home_score) + (away_score - ht_away_score)
+        if 'over' in m:
+            return 'won' if h2_total > _extract_goal_line(m) else 'lost'
+        if 'under' in m:
+            return 'won' if h2_total < _extract_goal_line(m) else 'lost'
+        return None
+
     return None
 
 
@@ -125,11 +152,12 @@ def _names_match(a, b):
 
 
 def _find_score(fixtures_data, home_team, away_team):
-    """Match a prediction to a finished fixture by team name, return (h, a).
+    """Match a prediction to a finished fixture by team name.
+    Returns (home_score, away_score, ht_home_score, ht_away_score).
     Uses normalised fuzzy matching so hyphen/accent/abbreviation differences
     between stored names and SportMonks names don't cause misses."""
     if not fixtures_data:
-        return None, None
+        return None, None, None, None
 
     for fix in fixtures_data.get('fixtures', []):
         if (_names_match(fix.get('home_team', ''), home_team) and
@@ -137,10 +165,16 @@ def _find_score(fixtures_data, home_team, away_team):
             status = fix.get('match_status', '')
             h = fix.get('home_score')
             a = fix.get('away_score')
+            ht_h = fix.get('ht_home_score')
+            ht_a = fix.get('ht_away_score')
             if status in ('FT', 'AET', 'PEN') and h is not None and a is not None:
-                return int(h), int(a)
+                return (
+                    int(h), int(a),
+                    int(ht_h) if ht_h is not None else None,
+                    int(ht_a) if ht_a is not None else None,
+                )
 
-    return None, None
+    return None, None, None, None
 
 
 def update_past_results(proxy, days_back=3):
@@ -182,14 +216,15 @@ def update_past_results(proxy, days_back=3):
             if not matches:
                 continue
 
-            # Check if all picks are already resolved — skip early
-            # result may be stored as None (not yet set) or 'pending'
-            def _is_pending(m):
+            # Check if all picks are already resolved — skip early.
+            # Also re-evaluate 'void' picks so previously-voided half-time
+            # markets get a real result now that we have HT score data.
+            def _needs_evaluation(m):
                 r = m.get('result')
-                return r is None or r == 'pending'
+                return r is None or r in ('pending', 'void')
 
-            pending = [m for m in matches if _is_pending(m)]
-            if not pending:
+            needs_eval = [m for m in matches if _needs_evaluation(m)]
+            if not needs_eval:
                 print(f"  ✅ {date_str}: all picks already resolved")
                 continue
 
@@ -201,8 +236,8 @@ def update_past_results(proxy, days_back=3):
             day_errors = 0
 
             for match in matches:
-                # Already resolved — leave it alone
-                if not _is_pending(match):
+                # Already firmly resolved — leave it alone
+                if not _needs_evaluation(match):
                     updated_matches.append(match)
                     continue
 
@@ -210,35 +245,51 @@ def update_past_results(proxy, days_back=3):
                 away = match.get('away_team', '')
                 market = match.get('market', '')
 
-                home_score, away_score = _find_score(fixtures_result, home, away)
-                result = _determine_result(home_score, away_score, market)
+                home_score, away_score, ht_home_score, ht_away_score = \
+                    _find_score(fixtures_result, home, away)
+                result = _determine_result(
+                    home_score, away_score, market,
+                    ht_home_score=ht_home_score,
+                    ht_away_score=ht_away_score,
+                )
 
                 updated = dict(match)
                 if result is not None:
                     updated['result'] = result
+                    # Write scores into the match so the Flutter app can
+                    # read home_score / away_score directly from Firestore.
                     if home_score is not None:
+                        updated['home_score'] = home_score
+                        updated['away_score'] = away_score
+                        updated['match_status'] = 'FT'
                         updated['actual_home_score'] = home_score
                         updated['actual_away_score'] = away_score
+                    if ht_home_score is not None:
+                        updated['ht_home_score'] = ht_home_score
+                        updated['ht_away_score'] = ht_away_score
                     day_updated += 1
                 else:
-                    # Score not found OR market undeterminable (e.g. half-time markets).
-                    # Void if the game should be well and truly finished by now (> 2.5h).
-                    # Use score found (not None) OR age as the signal — don't require
-                    # home_score to be None, since we may have FT score but not HT score.
+                    # Score not found OR market undeterminable (no HT data yet).
+                    # Void only when the game is well and truly finished (> 2.5h).
                     kickoff_str = match.get('kickoff', '')
                     if kickoff_str:
                         try:
                             from datetime import datetime as dt
                             kickoff = dt.fromisoformat(kickoff_str.replace('Z', '+00:00'))
-                            # Make naive datetimes UTC-aware so the subtraction works
                             if kickoff.tzinfo is None:
                                 kickoff = kickoff.replace(tzinfo=timezone.utc)
                             age_hours = (datetime.now(timezone.utc) - kickoff).total_seconds() / 3600
                             if age_hours > 2.5:
                                 updated['result'] = 'void'
                                 if home_score is not None:
+                                    updated['home_score'] = home_score
+                                    updated['away_score'] = away_score
+                                    updated['match_status'] = 'FT'
                                     updated['actual_home_score'] = home_score
                                     updated['actual_away_score'] = away_score
+                                if ht_home_score is not None:
+                                    updated['ht_home_score'] = ht_home_score
+                                    updated['ht_away_score'] = ht_away_score
                                 day_errors += 1
                         except Exception:
                             pass
