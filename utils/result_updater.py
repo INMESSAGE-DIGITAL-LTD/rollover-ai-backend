@@ -15,8 +15,15 @@ from datetime import datetime, timedelta, timezone
 
 
 def _extract_goal_line(market):
-    """Extract the numeric goal line from a market string, e.g. '1st Half Over 0.5' → 0.5."""
+    """Extract the numeric goal line from a market string, e.g. '1st Half Over 0.5' → 0.5.
+    Always looks for the number AFTER 'over'/'under' so '2nd Half Over 0.5'
+    returns 0.5, not 2.0 (which would be extracted from '2nd')."""
     import re
+    # Prefer the number directly after over/under
+    ov_match = re.search(r'(?:over|under)\s*(\d+\.?\d*)', market, re.IGNORECASE)
+    if ov_match:
+        return float(ov_match.group(1))
+    # Fallback to first number in string
     match = re.search(r'(\d+\.?\d*)', market)
     return float(match.group(1)) if match else 0.5
 
