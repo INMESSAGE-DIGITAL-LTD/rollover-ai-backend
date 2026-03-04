@@ -68,7 +68,9 @@ LEAGUE_IDS = {
     600: 'Super Lig',
 }
 
-# No cup rejection — cups in our plan are safe to use
+# Cup competition league IDs — require stronger stats evidence for team goal markets
+CUP_LEAGUE_IDS = {24, 27, 390, 570}  # FA Cup, Carabao Cup, Coppa Italia, Copa Del Rey
+
 LEAGUE_FILTER = ','.join(str(lid) for lid in LEAGUE_IDS)
 
 # Map bookmaker lines to our AI markets
@@ -440,6 +442,7 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         home_id = fix.get('home_team_id')
         away_id = fix.get('away_team_id')
         season_id = fix.get('season_id')
+        is_cup = fix.get('league') in CUP_LEAGUE_IDS
         home_live = None
         away_live = None
         h2h_data = None
@@ -597,10 +600,16 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         # === Home/Away Goals Over 0.5 ===
         hg = markets.get('home_goals', {})
         if 0.5 in hg and 'over' in hg[0.5]:
-            _try_add('Home Over 0.5 Goals', hg[0.5]['over'], AI_MARKET_MAP['home_over_05'])
+            # Cup games: only include if home team scores freely at home (avg ≥ 1.2)
+            home_venue_avg = (home_live or {}).get('home_avg_scored', 1.5)
+            if not is_cup or home_venue_avg >= 1.2:
+                _try_add('Home Over 0.5 Goals', hg[0.5]['over'], AI_MARKET_MAP['home_over_05'])
         ag = markets.get('away_goals', {})
         if 0.5 in ag and 'over' in ag[0.5]:
-            _try_add('Away Over 0.5 Goals', ag[0.5]['over'], AI_MARKET_MAP['away_over_05'])
+            # Cup games: only include if away team scores away frequently (avg ≥ 1.0)
+            away_venue_avg = (away_live or {}).get('away_avg_scored', 1.0)
+            if not is_cup or away_venue_avg >= 1.0:
+                _try_add('Away Over 0.5 Goals', ag[0.5]['over'], AI_MARKET_MAP['away_over_05'])
 
         # === Draw (1X2) — high odds, valuable for free picks ===
         if 'draw' in ftr:
@@ -850,7 +859,7 @@ def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_
     combined_odds = 1.0
     used_matches = set()
     market_type_count = {}
-    MAX_SAME_MARKET = 3
+    MAX_SAME_MARKET = 2  # Max 2 picks with the same market per slip (diversity)
 
     for opt in filtered:
         match_key = f"{opt['home_team']}_{opt['away_team']}"
@@ -867,17 +876,22 @@ def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_
         if len(slip_matches) >= num_matches:
             break
 
-    # If diversity cap caused us to fall short, relax it and fill remaining spots
+    # If diversity cap caused us to fall short, relax to 3 (not unlimited) and fill remaining
     if len(slip_matches) < num_matches:
+        RELAXED_MAX = 3
         for opt in filtered:
             if len(slip_matches) >= num_matches:
                 break
             match_key = f"{opt['home_team']}_{opt['away_team']}"
             if match_key in used_matches:
                 continue
+            market_label = opt['market']
+            if market_type_count.get(market_label, 0) >= RELAXED_MAX:
+                continue
             slip_matches.append(opt)
             combined_odds *= opt['odds']
             used_matches.add(match_key)
+            market_type_count[market_label] = market_type_count.get(market_label, 0) + 1
 
     return {
         'date': datetime.now(timezone.utc).strftime('%Y-%m-%d'),

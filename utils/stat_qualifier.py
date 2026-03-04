@@ -141,8 +141,12 @@ def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h, 
     lab = market_label.lower()
     if 'double chance' in lab or 'home or' in lab or 'draw or' in lab:
         min_edge = 0.02 if has_stats else 0.01
+    elif 'home over 0.5' in lab or 'away over 0.5' in lab:
+        min_edge = 0.04 if has_stats else 0.03  # Higher bar for team-specific threshold markets
     elif 'over 0.5' in lab:
         min_edge = 0.02 if has_stats else 0.01
+    elif 'under 3.5' in lab or 'under 4.5' in lab:
+        min_edge = 0.02 if has_stats else 0.01  # Lower bar — safe wide-target markets
     elif 'over 1.5' in lab:
         min_edge = 0.03 if has_stats else 0.02
     elif 'over 2.5' in lab:
@@ -200,7 +204,7 @@ def _qualify_by_market(label, ai_prob, implied_prob, home, away, h2h):
     elif 'under 0.5' in lab and 'half' in lab:
         return _qualify_under(ai_prob, implied_prob, home, away)
     elif 'over 0.5' in lab and ('home' in lab or 'away' in lab or 'half' in lab):
-        return _qualify_team_goals(ai_prob, implied_prob, home, away)
+        return _qualify_team_goals(label, ai_prob, implied_prob, home, away)
     elif 'over 0.5' in lab:
         return _qualify_over05(ai_prob, implied_prob, home, away)
     elif lab == 'home win':
@@ -273,15 +277,47 @@ def _qualify_over05(ai_prob, implied, home, away):
     return min(0.97, max(ai_prob * 1.02, implied + 0.02))
 
 
-def _qualify_team_goals(ai_prob, implied, home, away):
+def _qualify_team_goals(label, ai_prob, implied, home, away):
     """Home/Away to score, 1H/2H goals.
-    Uses the AVERAGE scored-in rate (not max) to avoid over-optimism when
-    one team scores frequently but the other doesn't — e.g. Brondby 0-0 cases.
+
+    Uses VENUE-SPECIFIC stats for team scoring markets so we don't inflate
+    the probability of 'Home Over 0.5' using the away team's scoring rate.
+    Also rejects when the opposing team has a strong clean sheet record.
     """
     if home is None or away is None:
         return max(ai_prob, implied + 0.03)
-    # Average is more conservative and avoids being misled by the away team's
-    # scoring rate when predicting Home Over 0.5 Goals (and vice-versa).
+
+    lab = label.lower()
+
+    # Home team scoring markets: only the home team needs to score
+    if 'home over 0.5' in lab or 'home to score' in lab:
+        # Penalise if away team has a strong clean sheet record
+        opp_cs = away.get('clean_sheet_rate', 0.25)
+        if opp_cs >= 0.40:
+            return implied * 0.97  # Strong visiting defense → reject
+        # Use home-venue scoring rate (how often they score at home)
+        score_rate = home.get('scored_in_rate', 0.78)
+        home_venue_avg = home.get('home_avg_scored', home['avg_goals_scored'])
+        blended = ai_prob * 0.55 + score_rate * 0.25 + implied * 0.20
+        if home_venue_avg < 1.0:  # Rarely score at home → dampen
+            blended *= 0.97
+        return min(0.93, max(blended, implied + 0.02))
+
+    # Away team scoring markets: only the away team needs to score
+    if 'away over 0.5' in lab or 'away to score' in lab:
+        # Penalise if home team has a strong clean sheet record at home
+        opp_cs = home.get('clean_sheet_rate', 0.30)
+        if opp_cs >= 0.40:
+            return implied * 0.97  # Strong home defense → reject
+        # Use away-venue scoring rate (how often they score away)
+        score_rate = away.get('scored_in_rate', 0.70)
+        away_venue_avg = away.get('away_avg_scored', away['avg_goals_scored'])
+        blended = ai_prob * 0.55 + score_rate * 0.25 + implied * 0.20
+        if away_venue_avg < 0.8:  # Rarely score away → dampen more
+            blended *= 0.96
+        return min(0.93, max(blended, implied + 0.02))
+
+    # 1st / 2nd half over 0.5 — both teams contribute, use average
     score_rate = (home['scored_in_rate'] + away['scored_in_rate']) / 2.0
     blended = ai_prob * 0.55 + score_rate * 0.25 + implied * 0.20
     return min(0.93, max(blended, implied + 0.02))
@@ -476,8 +512,18 @@ def _compute_stability(market_label, home, away):
     lab = market_label.lower()
 
     if 'over' in lab and 'goal' in lab:
-        consistency = (home['scored_in_rate'] + away['scored_in_rate']) / 2.0
-        volume = min(1.0, (home['avg_goals_scored'] + away['avg_goals_scored']) / 4.0)
+        if 'home over' in lab:
+            # Only the home team needs to score — use their venue-specific stats
+            consistency = home.get('scored_in_rate', 0.78)
+            volume = min(1.0, home.get('home_avg_scored', home['avg_goals_scored']) / 2.0)
+        elif 'away over' in lab:
+            # Only the away team needs to score — use their venue-specific stats
+            consistency = away.get('scored_in_rate', 0.70)
+            volume = min(1.0, away.get('away_avg_scored', away['avg_goals_scored']) / 2.0)
+        else:
+            # General total goals / half goals — both teams contribute
+            consistency = (home['scored_in_rate'] + away['scored_in_rate']) / 2.0
+            volume = min(1.0, (home['avg_goals_scored'] + away['avg_goals_scored']) / 4.0)
         return consistency * 0.6 + volume * 0.4
 
     if lab in ('home win', 'away win'):
