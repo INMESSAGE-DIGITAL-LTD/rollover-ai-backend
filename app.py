@@ -567,32 +567,39 @@ def generate_daily():
     """
     Manual trigger: Generate today's predictions and write to Firestore.
     Protected by CRON_SECRET Bearer token.
-    The cron job uses cron_generate.py directly (no HTTP).
-    This endpoint exists for manual/emergency triggers only.
+    Returns 202 immediately and runs generation in a background thread so
+    the request doesn't time out on Render's 30-second HTTP limit.
 
     POST /api/generate-daily
     Header: Authorization: Bearer <CRON_SECRET>
     """
+    import threading
+
     # ── Auth check ──
     cron_secret = os.environ.get('CRON_SECRET', '').strip()
     auth_header = request.headers.get('Authorization', '')
     if not cron_secret or auth_header != f'Bearer {cron_secret}':
         return jsonify({'error': 'Unauthorized'}), 401
 
-    try:
-        from services.generator import generate_and_store
+    def _run():
+        try:
+            from services.generator import generate_and_store
+            fixtures = fetch_todays_fixtures()
+            result = generate_and_store(
+                fixtures, predictor, stats_calculator, sm_stats,
+                sm_proxy=sm_proxy,
+            )
+            print(f"✅ Background generation done: {result.get('message', '')}")
+        except Exception as e:
+            print(f"❌ Background generation error: {e}")
 
-        fixtures = fetch_todays_fixtures()
-        result = generate_and_store(
-            fixtures, predictor, stats_calculator, sm_stats,
-            sm_proxy=sm_proxy,
-        )
-        status_code = 200 if result['status'] == 'success' else 200
-        return jsonify(result), status_code
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
 
-    except Exception as e:
-        print(f"❌ Generate error: {e}")
-        return jsonify({'error': str(e)}), 500
+    return jsonify({
+        'status': 'started',
+        'message': 'Generation started in background. Picks will be ready in ~60s.',
+    }), 202
 
 
 if __name__ == '__main__':
