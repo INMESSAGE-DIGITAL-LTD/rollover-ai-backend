@@ -185,6 +185,30 @@ def today_predictions():
     return picks_by_date(today)
 
 
+def _strip_results_for_today(matches, date_str):
+    """
+    Remove result/score fields from matches when serving today's picks.
+    Prevents stale result data in Firestore from making future games appear
+    as already finished in the Flutter app — no app release needed.
+    """
+    import datetime as _dt
+    today = _dt.datetime.utcnow().strftime('%Y-%m-%d')
+    if date_str != today:
+        return matches  # Only strip for today — past results stay intact
+    _result_keys = (
+        'result', 'match_status', 'home_score', 'away_score',
+        'actual_home_score', 'actual_away_score',
+        'ht_home_score', 'ht_away_score', 'results_summary',
+    )
+    cleaned = []
+    for m in matches:
+        c = dict(m)
+        for k in _result_keys:
+            c.pop(k, None)
+        cleaned.append(c)
+    return cleaned
+
+
 @app.route('/api/picks/<date_str>', methods=['GET'])
 def picks_by_date(date_str):
     """
@@ -212,12 +236,15 @@ def picks_by_date(date_str):
             if matches:
                 # Slice to requested count
                 matches = matches[:max_matches]
-                
+                # Strip result/score fields for today so future games never
+                # appear as already finished in the app (no rebuild needed)
+                matches = _strip_results_for_today(matches, date_str)
+
                 # Calculate combined odds for the slice
                 combined = 1.0
                 for m in matches:
                     combined *= float(m.get('odds', 1.0))
-                
+
                 print(f"⚡ Serving Firestore picks for {date_str} ({len(matches)} matches)")
                 return jsonify({
                     'date': date_str,
@@ -317,6 +344,7 @@ def rollover_picks_by_date(date_str):
             data = doc.to_dict()
             matches = data.get('matches', [])
             if matches:
+                matches = _strip_results_for_today(matches, date_str)
                 combined = 1.0
                 for m in matches:
                     combined *= float(m.get('odds', 1.0))
