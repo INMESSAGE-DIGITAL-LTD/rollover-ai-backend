@@ -10,8 +10,8 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from datetime import datetime
-from utils.fixture_fetcher import fetch_todays_fixtures
+from datetime import datetime, timedelta
+from utils.fixture_fetcher import fetch_fixtures_by_date
 from utils.sportmonks_stats import fetch_team_stats, fetch_h2h
 from utils.sportmonks_proxy import SportMonksProxy
 from models.multi_market_predictor import MultiMarketPredictor
@@ -28,8 +28,10 @@ class _SmStatsProxy:
 
 
 def main():
-    today_str = datetime.utcnow().strftime('%Y-%m-%d')
-    print(f"🕛 Cron worker started for {today_str}")
+    # Cron runs at 23:00 UTC = 00:00 WAT. We generate picks for the NEXT UTC
+    # day so that WAT users see their "today" picks ready at midnight.
+    target_str = (datetime.utcnow() + timedelta(days=1)).strftime('%Y-%m-%d')
+    print(f"🕛 Cron worker started — generating picks for {target_str}")
 
     # Load models
     print("🔄 Loading models...")
@@ -40,8 +42,8 @@ def main():
     sm_proxy = SportMonksProxy()
     print("✅ Models loaded")
 
-    # Fetch fixtures
-    fixtures = fetch_todays_fixtures()
+    # Fetch fixtures for the target date
+    fixtures = fetch_fixtures_by_date(target_str)
 
     # Init SQLite for backup
     init_history_db()
@@ -59,6 +61,7 @@ def main():
     result = generate_and_store(
         fixtures, predictor, stats_calculator, sm_stats,
         sm_proxy=sm_proxy,
+        date_str=target_str,
     )
 
     print(f"🎉 Cron complete: {result['message']}")

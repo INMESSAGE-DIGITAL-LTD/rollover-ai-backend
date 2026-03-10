@@ -23,6 +23,7 @@ def generate_and_store(
     max_odds=1.60,
     save_sqlite_fn=None,
     sm_proxy=None,
+    date_str=None,
 ):
     """
     Run AI predictions on fixtures and write results to Firestore.
@@ -44,7 +45,7 @@ def generate_and_store(
     from utils.fixture_fetcher import build_parlay_slip
     from utils.market_tracker import get_market_penalties
 
-    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+    today_str = date_str if date_str else datetime.utcnow().strftime('%Y-%m-%d')
 
     if not fixtures:
         return {

@@ -341,7 +341,7 @@ def update_past_results(proxy, days_back=3):
                 })
                 print(f"  📅 {date_str}: summary synced ({wins}W / {losses}L / {len(still_pending)} pending)")
             else:
-                print(f"  ⏳ {date_str}: {len(pending)} picks still pending "
+                print(f"  ⏳ {date_str}: {len(still_pending)} picks still pending "
                       f"(scores not available yet)")
 
         except Exception as e:
