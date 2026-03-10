@@ -290,6 +290,98 @@ def picks_by_date(date_str):
         print(f"❌ Error in picks_by_date: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/rollover-picks/<date_str>', methods=['GET'])
+def rollover_picks_by_date(date_str):
+    """
+    Safety-first Rollover picks — generated INDEPENDENTLY from AI Pro.
+
+    Only the safest markets: Over 1.5 Goals, Over 2.5 Goals,
+    Double Chance (1X), Double Chance (X2).
+    Searches ALL leagues (no league filter) to find dominant-team fixtures.
+
+    GET /api/rollover-picks/2026-03-10
+    """
+    from datetime import datetime as dt
+    try:
+        dt.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    try:
+        # ─── 1. Fast path: check Firestore daily_rollover collection ───
+        db = get_firestore_client()
+        doc = db.collection('daily_rollover').document(date_str).get()
+
+        if doc.exists:
+            data = doc.to_dict()
+            matches = data.get('matches', [])
+            if matches:
+                combined = 1.0
+                for m in matches:
+                    combined *= float(m.get('odds', 1.0))
+                print(f"⚡ Serving Firestore rollover picks for {date_str} ({len(matches)} picks)")
+                return jsonify({
+                    'date': date_str,
+                    'slip': {
+                        'matches': matches,
+                        'match_count': len(matches),
+                        'combined_odds': round(combined, 2),
+                        'slip_confidence': data.get('slip_confidence', 'HIGH'),
+                    },
+                    'source': 'firestore',
+                })
+
+        # ─── 2. Slow path: generate on-demand ───
+        print(f"⚠️ No rollover doc for {date_str}, generating on-demand...")
+        from utils.fixture_fetcher import fetch_fixtures_for_rollover
+        from services.rollover_generator import generate_rollover_picks
+
+        fixtures = fetch_fixtures_for_rollover(date_str)
+
+        if not fixtures:
+            return jsonify({
+                'date': date_str,
+                'slip': {'matches': [], 'match_count': 0},
+                'message': 'No fixtures available for rollover.',
+            })
+
+        result = generate_rollover_picks(
+            fixtures, predictor, stats_calculator, sm_stats,
+            sm_proxy=sm_proxy,
+            date_str=date_str,
+        )
+
+        if result['status'] == 'success':
+            doc2 = db.collection('daily_rollover').document(date_str).get()
+            if doc2.exists:
+                data2 = doc2.to_dict()
+                matches2 = data2.get('matches', [])
+                combined2 = 1.0
+                for m in matches2:
+                    combined2 *= float(m.get('odds', 1.0))
+                return jsonify({
+                    'date': date_str,
+                    'slip': {
+                        'matches': matches2,
+                        'match_count': len(matches2),
+                        'combined_odds': round(combined2, 2),
+                        'slip_confidence': data2.get('slip_confidence', 'HIGH'),
+                    },
+                    'source': 'generated',
+                })
+
+        return jsonify({
+            'date': date_str,
+            'slip': {'matches': [], 'match_count': 0},
+            'message': result.get('message', 'No rollover picks available.'),
+        })
+
+    except Exception as e:
+        print(f"❌ Error in rollover_picks_by_date: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/free-picks/<date_str>', methods=['GET'])
 def free_picks_by_date(date_str):
     """

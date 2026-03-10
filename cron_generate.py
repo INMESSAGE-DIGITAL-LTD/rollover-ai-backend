@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime, timedelta
-from utils.fixture_fetcher import fetch_fixtures_by_date
+from utils.fixture_fetcher import fetch_fixtures_by_date, fetch_fixtures_for_rollover
 from utils.sportmonks_stats import fetch_team_stats, fetch_h2h
 from utils.sportmonks_proxy import SportMonksProxy
 from models.multi_market_predictor import MultiMarketPredictor
@@ -64,7 +64,22 @@ def main():
         date_str=target_str,
     )
 
-    print(f"🎉 Cron complete: {result['message']}")
+    print(f"🎉 AI Pro generation complete: {result['message']}")
+
+    # Step 3: Generate Rollover picks (safety-first, all leagues, separate Firestore doc)
+    try:
+        from services.rollover_generator import generate_rollover_picks
+        rollover_fixtures = fetch_fixtures_for_rollover(target_str)
+        rollover_result = generate_rollover_picks(
+            rollover_fixtures, predictor, stats_calculator, sm_stats,
+            sm_proxy=sm_proxy,
+            date_str=target_str,
+        )
+        print(f"🛡️ Rollover generation complete: {rollover_result['message']}")
+    except Exception as e:
+        print(f"⚠️ Rollover generation failed (non-fatal): {e}")
+
+    print(f"🎉 Cron complete for {target_str}")
 
 
 if __name__ == '__main__':

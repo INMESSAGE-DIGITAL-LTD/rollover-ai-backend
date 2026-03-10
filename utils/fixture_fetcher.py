@@ -137,10 +137,16 @@ def fetch_todays_fixtures():
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     return fetch_fixtures_by_date(today)
 
-def fetch_fixtures_by_date(date_str):
+def fetch_fixtures_for_rollover(date_str):
+    """Fetch fixtures from ALL leagues (no league filter) for Rollover picks.
+    Searches every available fixture to find the safest bets regardless of
+    league prestige — PSG vs small team, high-scoring lower leagues, etc."""
+    return fetch_fixtures_by_date(date_str, no_league_filter=True)
+
+def fetch_fixtures_by_date(date_str, no_league_filter=False):
     """Fetch fixtures for a given date with odds from SportMonks API.
     Falls back to football-data.org for UEFA competitions when SportMonks returns 0."""
-    fixtures = _fetch_fixtures_for_date(date_str)
+    fixtures = _fetch_fixtures_for_date(date_str, no_league_filter=no_league_filter)
 
     # Fallback: if SportMonks has no fixtures, try football-data.org for UEFA
     if not fixtures:
@@ -155,13 +161,15 @@ def fetch_fixtures_by_date(date_str):
     return fixtures
 
 
-def _fetch_fixtures_for_date(date_str):
-    """Fetch fixtures for a single date from SportMonks."""
+def _fetch_fixtures_for_date(date_str, no_league_filter=False):
+    """Fetch fixtures for a single date from SportMonks.
+    no_league_filter=True fetches all available leagues (used for Rollover mode)."""
+    league_param = '' if no_league_filter else f'&filters=fixtureLeagues:{LEAGUE_FILTER}'
     url = (
         f"{SPORTMONKS_BASE}/fixtures/date/{date_str}"
         f"?api_token={SPORTMONKS_TOKEN}"
         f"&include=participants;league;odds.market"
-        f"&filters=fixtureLeagues:{LEAGUE_FILTER}"
+        f"{league_param}"
         f"&per_page=50"
     )
 
@@ -1025,3 +1033,9 @@ def _build_form_summary(stats, side):
         'btts_pct': round(stats.get('btts_rate', 0) * 100),
         'matches': stats.get('matches_played', 0),
     }
+
+
+# ── Public exports for use by rollover_generator and other modules ──────────
+generate_match_options = _generate_match_options
+format_slip_matches = _format_slip_matches
+slip_confidence = _slip_confidence
