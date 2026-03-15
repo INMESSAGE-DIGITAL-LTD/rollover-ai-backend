@@ -69,11 +69,19 @@ def main():
     # Step 3: Generate Rollover picks (safety-first, all leagues, separate Firestore doc)
     try:
         from services.rollover_generator import generate_rollover_picks
+        from utils.market_tracker import get_market_penalties as _get_cron_mp
         rollover_fixtures = fetch_fixtures_for_rollover(target_str)
+        # Apply market penalties to rollover for smarter pick selection
+        _cron_mp = {}
+        try:
+            _cron_mp = _get_cron_mp(sm_proxy, lookback_days=7, min_picks=3)
+        except Exception:
+            pass
         rollover_result = generate_rollover_picks(
             rollover_fixtures, predictor, stats_calculator, sm_stats,
             sm_proxy=sm_proxy,
             date_str=target_str,
+            market_penalties=_cron_mp,
         )
         print(f"🛡️ Rollover generation complete: {rollover_result['message']}")
     except Exception as e:

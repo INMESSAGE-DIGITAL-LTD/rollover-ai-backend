@@ -374,10 +374,19 @@ def rollover_picks_by_date(date_str):
                 'message': 'No fixtures available for rollover.',
             })
 
+        # Apply market performance penalties for smarter rollover generation
+        from utils.market_tracker import get_market_penalties as _get_mp
+        _rollover_mp = {}
+        try:
+            _rollover_mp = _get_mp(sm_proxy, lookback_days=7, min_picks=3)
+        except Exception:
+            pass
+
         result = generate_rollover_picks(
             fixtures, predictor, stats_calculator, sm_stats,
             sm_proxy=sm_proxy,
             date_str=date_str,
+            market_penalties=_rollover_mp,
         )
 
         if result['status'] == 'success':

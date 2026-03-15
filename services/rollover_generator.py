@@ -7,7 +7,10 @@ Strategy:
   - No risky markets: no BTTS, no Away Win, no Draw, no half-time bets
   - Searches ALL leagues (no league filter) so dominant-team vs weak-team
     fixtures in ANY league can be included (e.g. PSG vs small club → Over 1.5)
+  - DYNAMIC pick count: only include picks that truly qualify (1-3 max)
   - Strict probability gates per market
+  - Market penalties applied to avoid repeating losing patterns
+  - Combined odds capped at 2.20 to keep daily slip safe
   - Stores results in Firestore daily_rollover/{date_str} (separate from AI Pro)
 """
 from datetime import datetime, timedelta
@@ -24,26 +27,36 @@ ROLLOVER_ALLOWED_MARKETS = {
 }
 
 # Minimum AI probability required per market for Rollover inclusion
+# RAISED: Previous thresholds (0.70/0.65/0.75/0.73) were too lenient
 ROLLOVER_MIN_PROB = {
-    'Over 1.5 Goals':     0.70,
-    'Over 2.5 Goals':     0.65,
-    'Double Chance (1X)': 0.75,
-    'Double Chance (X2)': 0.73,
+    'Over 1.5 Goals':     0.78,
+    'Over 2.5 Goals':     0.72,
+    'Double Chance (1X)': 0.80,
+    'Double Chance (X2)': 0.78,
 }
 
-# Minimum composite score per market
+# Minimum composite score per market (edge + prob + stability blend)
 ROLLOVER_MIN_COMPOSITE = {
-    'Over 1.5 Goals':     0.49,
-    'Over 2.5 Goals':     0.47,
-    'Double Chance (1X)': 0.50,
-    'Double Chance (X2)': 0.49,
+    'Over 1.5 Goals':     0.54,
+    'Over 2.5 Goals':     0.52,
+    'Double Chance (1X)': 0.55,
+    'Double Chance (X2)': 0.54,
 }
+
+# Minimum edge required for rollover picks (model_prob - implied_prob)
+ROLLOVER_MIN_EDGE = 0.06
 
 # Max single-pick odds for Rollover — keeps each pick very safe
-ROLLOVER_MAX_SINGLE_ODDS = 1.57
+ROLLOVER_MAX_SINGLE_ODDS = 1.50
 
-# Max 2 picks of the same market type in one slip (diversity)
-ROLLOVER_MAX_SAME_MARKET = 2
+# Max combined odds for the entire slip — prevents risky accumulation
+ROLLOVER_MAX_COMBINED_ODDS = 2.20
+
+# Max picks per slip — reduced from 5 to 3 for higher daily win rate
+ROLLOVER_MAX_PICKS = 3
+
+# Max 1 pick of the same market type in one slip (force diversity)
+ROLLOVER_MAX_SAME_MARKET = 1
 
 
 def generate_rollover_picks(
@@ -54,14 +67,20 @@ def generate_rollover_picks(
     *,
     sm_proxy=None,
     date_str=None,
-    num_picks=5,
+    num_picks=None,
+    market_penalties=None,
 ):
     """
     Generate safety-first rollover picks from fixtures.
 
     Uses the same fixture pipeline as the main generator but applies strict
-    market filtering and higher probability thresholds, then stores results in
-    the separate daily_rollover Firestore collection.
+    market filtering, higher probability thresholds, edge requirements, and
+    market penalties, then stores results in the separate daily_rollover
+    Firestore collection.
+
+    DYNAMIC PICK COUNT: Returns only picks that truly qualify (1 to ROLLOVER_MAX_PICKS).
+    If no picks meet the strict safety standards, returns 0 picks rather than
+    lowering the bar.
 
     Args:
         fixtures:          List of fixture dicts from SportMonks (all leagues).
@@ -69,7 +88,8 @@ def generate_rollover_picks(
         stats_calculator:  TeamStatsCalculator instance.
         sm_stats:          SportMonks stats proxy.
         date_str:          Target date (YYYY-MM-DD). Defaults to today UTC.
-        num_picks:         Max number of picks to include (default 5).
+        num_picks:         Max number of picks (default ROLLOVER_MAX_PICKS).
+        market_penalties:  Dict of {market: multiplier} from market_tracker.
 
     Returns:
         dict with keys: status, date, match_count, combined_odds, message
@@ -78,6 +98,7 @@ def generate_rollover_picks(
     from utils.sportmonks_stats import clear_cache
 
     target_date = date_str if date_str else datetime.utcnow().strftime('%Y-%m-%d')
+    max_picks = num_picks if num_picks else ROLLOVER_MAX_PICKS
 
     if not fixtures:
         return {
@@ -101,11 +122,25 @@ def generate_rollover_picks(
     safe_options = [
         o for o in all_options
         if o['market'] in ROLLOVER_ALLOWED_MARKETS
-        and o['ai_prob'] >= ROLLOVER_MIN_PROB.get(o['market'], 0.70)
-        and o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.49)
+        and o['ai_prob'] >= ROLLOVER_MIN_PROB.get(o['market'], 0.78)
+        and o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.54)
+        and o.get('edge', 0) >= ROLLOVER_MIN_EDGE
         and o['odds'] >= 1.10
         and o['odds'] <= ROLLOVER_MAX_SINGLE_ODDS
     ]
+
+    # Apply market penalties from recent performance tracking
+    if market_penalties:
+        for opt in safe_options:
+            mkt = opt['market']
+            if mkt in market_penalties:
+                penalty = market_penalties[mkt]
+                opt['composite_score'] *= penalty
+                # Re-check composite threshold after penalty
+        safe_options = [
+            o for o in safe_options
+            if o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.54)
+        ]
 
     print(f"🛡️ Rollover Generator: {len(safe_options)} safe options after filtering")
 
@@ -120,15 +155,22 @@ def generate_rollover_picks(
     # Sort by composite_score descending (most confident first)
     safe_options.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
 
-    # ── Select slip: one pick per match, max num_picks, market diversity ─────
+    # ── Select slip: one pick per match, max max_picks, market diversity ──────
+    # DYNAMIC: Only include picks that qualify. Could be 1, 2, or 3.
     slip_matches = []
     combined_odds = 1.0
     used_matches = set()
     market_type_count = {}
 
     for opt in safe_options:
-        if len(slip_matches) >= num_picks:
+        if len(slip_matches) >= max_picks:
             break
+
+        # Check if adding this pick would exceed combined odds cap
+        potential_combined = combined_odds * opt['odds']
+        if potential_combined > ROLLOVER_MAX_COMBINED_ODDS and len(slip_matches) >= 1:
+            continue
+
         match_key = f"{opt['home_team']}_{opt['away_team']}"
         if match_key in used_matches:
             continue
