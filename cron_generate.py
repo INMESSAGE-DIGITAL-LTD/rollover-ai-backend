@@ -87,6 +87,19 @@ def main():
     except Exception as e:
         print(f"⚠️ Rollover generation failed (non-fatal): {e}")
 
+    # Step 4: Generate AI Pro tips (server-side, replaces client-side RapidAPI logic)
+    try:
+        from services.ai_pro_generator import generate_ai_pro_picks
+        ai_pro_result = generate_ai_pro_picks(
+            fixtures, predictor, stats_calculator, sm_stats,
+            sm_proxy=sm_proxy,
+            date_str=target_str,
+            market_penalties=_cron_mp,
+        )
+        print(f"🧠 AI Pro generation complete: {ai_pro_result['message']}")
+    except Exception as e:
+        print(f"⚠️ AI Pro generation failed (non-fatal): {e}")
+
     print(f"🎉 Cron complete for {target_str}")
 
 

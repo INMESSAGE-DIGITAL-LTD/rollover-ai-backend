@@ -419,6 +419,99 @@ def rollover_picks_by_date(date_str):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/ai-pro-picks/<date_str>', methods=['GET'])
+def ai_pro_picks_by_date(date_str):
+    """
+    AI Pro Tips — server-side generation using XGBoost pipeline.
+
+    Replaces the old client-side RapidAPI logic with smarter, server-controlled
+    predictions. Dynamic 1-4 tips with real odds and strict quality gates.
+
+    GET /api/ai-pro-picks/2026-03-15
+    """
+    from datetime import datetime as dt
+    try:
+        dt.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    try:
+        # ─── 1. Fast path: check Firestore daily_ai_pro collection ───
+        db = get_firestore_client()
+        doc = db.collection('daily_ai_pro').document(date_str).get()
+
+        if doc.exists:
+            data = doc.to_dict()
+            tips = data.get('tips', [])
+            if tips:
+                # Recalculate combined odds from stored tips
+                combined = 1.0
+                for t in tips:
+                    combined *= float(t.get('odds', 1.0))
+                print(f"⚡ Serving Firestore AI Pro tips for {date_str} ({len(tips)} tips)")
+                return jsonify({
+                    'date': date_str,
+                    'tips': tips,
+                    'tip_count': len(tips),
+                    'combined_odds': round(combined, 2),
+                    'confidence': data.get('confidence', 'HIGH'),
+                    'source': 'firestore',
+                })
+
+        # ─── 2. Slow path: generate on-demand ───
+        print(f"⚠️ No AI Pro doc for {date_str}, generating on-demand...")
+        from utils.fixture_fetcher import fetch_todays_fixtures
+        from services.ai_pro_generator import generate_ai_pro_picks
+
+        fixtures = fetch_todays_fixtures(date_str)
+
+        if not fixtures:
+            return jsonify({
+                'date': date_str,
+                'tips': [],
+                'tip_count': 0,
+                'combined_odds': 1.0,
+                'message': 'No fixtures available.',
+            })
+
+        # Apply market performance penalties
+        from utils.market_tracker import get_market_penalties as _get_ai_pro_mp
+        _ai_pro_mp = {}
+        try:
+            _ai_pro_mp = _get_ai_pro_mp(sm_proxy, lookback_days=7, min_picks=3)
+        except Exception:
+            pass
+
+        result = generate_ai_pro_picks(
+            fixtures, predictor, stats_calculator, sm_stats,
+            sm_proxy=sm_proxy,
+            date_str=date_str,
+            market_penalties=_ai_pro_mp,
+        )
+
+        if result['status'] == 'success':
+            return jsonify({
+                'date': result['date'],
+                'tips': result['tips'],
+                'tip_count': result['tip_count'],
+                'combined_odds': result['combined_odds'],
+                'confidence': result['confidence'],
+                'source': 'generated',
+            })
+
+        return jsonify({
+            'date': date_str,
+            'tips': [],
+            'tip_count': 0,
+            'combined_odds': 1.0,
+            'message': result.get('message', 'No AI Pro tips available.'),
+        })
+
+    except Exception as e:
+        print(f"❌ Error in ai_pro_picks_by_date: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/free-picks/<date_str>', methods=['GET'])
 def free_picks_by_date(date_str):
     """
