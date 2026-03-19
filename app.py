@@ -49,7 +49,7 @@ print("✅ SportMonks live stats module ready!")
 def home():
     return jsonify({
         "service": "Rollover AI Prediction API",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "status": "running",
         "models_loaded": len(predictor.models),
         "engine": "hybrid (SportMonks + XGBoost + Statistical Qualification)",
@@ -79,255 +79,214 @@ def predict():
         # Prepare features
         features = {
             'home_goals_per_game': data.get('home_goals_per_game', 1.5),
-            'home_goals_conceded_per_game': data.get('home_goals_conceded_per_game', 1.0),
-            'home_over15_rate': data.get('home_over15_rate', 0.6),
-            'home_over05_rate': data.get('home_over05_rate', 0.8),
-            'home_first_half_goals': data.get('home_first_half_goals', 0.7),
             'away_goals_per_game': data.get('away_goals_per_game', 1.2),
-            'away_goals_conceded_per_game': data.get('away_goals_conceded_per_game', 1.3),
-            'away_over15_rate': data.get('away_over15_rate', 0.5),
-            'away_over05_rate': data.get('away_over05_rate', 0.7),
-            'away_first_half_goals': data.get('away_first_half_goals', 0.5),
-            'home_home_goals': data.get('home_home_goals', 1.8),
-            'home_home_conceded': data.get('home_home_conceded', 0.8),
-            'away_away_goals': data.get('away_away_goals', 1.0),
-            'away_away_conceded': data.get('away_away_conceded', 1.5),
-            'total_expected_goals': data.get('total_expected_goals', 2.8),
-            'defensive_strength': data.get('defensive_strength', 2.3),
-            'over15_odds': data.get('over15_odds', 1.5),
-            'under15_odds': data.get('under15_odds', 2.5),
+            'home_conceded_per_game': data.get('home_conceded_per_game', 1.0),
+            'away_conceded_per_game': data.get('away_conceded_per_game', 1.3),
+            'home_xg': data.get('home_xg', 1.4),
+            'away_xg': data.get('away_xg', 1.1),
+            'home_xga': data.get('home_xga', 1.1),
+            'away_xga': data.get('away_xga', 1.4),
+            'home_form': data.get('home_form', 0.5),
+            'away_form': data.get('away_form', 0.5),
+            'h2h_home_wins': data.get('h2h_home_wins', 2),
+            'h2h_away_wins': data.get('h2h_away_wins', 2),
+            'h2h_draws': data.get('h2h_draws', 1),
+            'h2h_avg_goals': data.get('h2h_avg_goals', 2.5),
         }
         
-        # Predict
-        predictions = predictor.predict_match(features)
+        predictions = predictor.predict_all_markets(features)
         
-        # Build response
-        result = {
-            "match": {
-                "home_team": data.get('home_team', ''),
-                "away_team": data.get('away_team', '')
-            },
-            "predictions": {}
-        }
-        
-        for market, prob in predictions.items():
-            prob_val = float(prob)  # Convert numpy float32 to Python float
-            result["predictions"][market] = {
-                "probability": round(prob_val * 100, 1),
-                "confidence": "HIGH" if prob_val >= 0.75 else "MEDIUM" if prob_val >= 0.65 else "LOW",
-                "pick": "YES" if prob_val >= 0.65 else "NO"
-            }
-        
-        return jsonify(result)
-        
+        return jsonify({
+            'home_team': data.get('home_team', 'Home'),
+            'away_team': data.get('away_team', 'Away'),
+            'predictions': predictions
+        })
     except Exception as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/predictions/test', methods=['GET'])
-def test_prediction():
+
+@app.route('/api/fixtures')
+def get_fixtures():
+    """Get today's fixtures from SportMonks"""
+    try:
+        fixtures = sm_proxy.get_cached_fixtures()
+        return jsonify({
+            'date': fixtures.get('date', ''),
+            'fixtures': fixtures.get('fixtures', []),
+            'count': len(fixtures.get('fixtures', []))
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/fixtures/<date_str>')
+def get_fixtures_by_date(date_str):
     """
-    Test endpoint with sample match
-    """
-    # Sample features (strong attacking teams)
-    features = {
-        'home_goals_per_game': 2.1,
-        'home_goals_conceded_per_game': 1.0,
-        'home_over15_rate': 0.7,
-        'home_over05_rate': 0.85,
-        'home_first_half_goals': 0.9,
-        'away_goals_per_game': 1.8,
-        'away_goals_conceded_per_game': 1.1,
-        'away_over15_rate': 0.65,
-        'away_over05_rate': 0.8,
-        'away_first_half_goals': 0.7,
-        'home_home_goals': 2.3,
-        'home_home_conceded': 0.8,
-        'away_away_goals': 1.5,
-        'away_away_conceded': 1.3,
-        'total_expected_goals': 3.8,
-        'defensive_strength': 2.1,
-        'over15_odds': 1.4,
-        'under15_odds': 2.8,
-    }
+    Get fixtures for a specific date.
     
-    predictions = predictor.predict_match(features)
+    GET /api/fixtures/2026-02-15
+    """
+    from datetime import datetime as dt
+    try:
+        # Validate date format
+        dt.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
     
-    result = {
-        "match": {
-            "home_team": "Man City (sample)",
-            "away_team": "Liverpool (sample)"
-        },
-        "predictions": {}
-    }
+    try:
+        fixtures = fetch_fixtures_by_date(date_str)
+        return jsonify({
+            'date': date_str,
+            'fixtures': fixtures,
+            'count': len(fixtures)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/parlay')
+def get_parlay():
+    """
+    Build optimal multi-match parlay from today's fixtures.
     
-    # Sort by probability descending
-    sorted_markets = sorted(predictions.items(), key=lambda x: x[1], reverse=True)
+    Optional query params:
+    - num_matches: Max matches (default 5)
+    - min_odds: Minimum odds filter (default 1.10)
+    - max_odds: Maximum odds filter (default 1.60)
+    """
+    try:
+        # Get cached fixtures from proxy (fast)
+        fixtures = sm_proxy.get_cached_fixtures().get('fixtures', [])
+        
+        # Default to 5 matches
+        num_matches = int(request.args.get('num_matches', 5))
+        min_odds = float(request.args.get('min_odds', 1.10))
+        max_odds = float(request.args.get('max_odds', 1.30))
+        
+        result = build_parlay_slip(
+            fixtures, predictor, stats_calculator,
+            num_matches=num_matches,
+            min_odds=min_odds,
+            max_odds=max_odds,
+            sm_stats=sm_stats
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/picks/<date_str>')
+def get_daily_picks(date_str):
+    """
+    Get daily AI picks for a date (format: YYYY-MM-DD).
     
-    for market, prob in sorted_markets:
-        prob_val = float(prob)  # Convert numpy float32 to Python float
-        result["predictions"][market] = {
-            "probability": round(prob_val * 100, 1),
-            "confidence": "HIGH" if prob_val >= 0.75 else "MEDIUM" if prob_val >= 0.65 else "LOW",
-            "pick": "YES" if prob_val >= 0.65 else "NO"
-        }
-    
-    return jsonify(result)
-
-@app.route('/api/today', methods=['GET'])
-def today_predictions():
-    """
-    Fetch today's predictions.
-    1. READ from Firestore first (FAST).
-    2. If missing, GENERATE via AI (SLOW) and save.
-    """
-    import datetime
-    today = datetime.datetime.utcnow().strftime('%Y-%m-%d')
-    return picks_by_date(today)
-
-
-def _strip_results_for_today(matches, date_str):
-    """
-    Remove result/score fields from matches when serving today's picks.
-    Prevents stale result data in Firestore from making future games appear
-    as already finished in the Flutter app — no app release needed.
-    """
-    import datetime as _dt
-    today = _dt.datetime.utcnow().strftime('%Y-%m-%d')
-    if date_str != today:
-        return matches  # Only strip for today — past results stay intact
-    _result_keys = (
-        'result', 'match_status', 'home_score', 'away_score',
-        'actual_home_score', 'actual_away_score',
-        'ht_home_score', 'ht_away_score', 'results_summary',
-    )
-    cleaned = []
-    for m in matches:
-        c = dict(m)
-        for k in _result_keys:
-            c.pop(k, None)
-        cleaned.append(c)
-    return cleaned
-
-
-@app.route('/api/picks/<date_str>', methods=['GET'])
-def picks_by_date(date_str):
-    """
-    Get picks for a specific date.
     Checks Firestore first. If missing, generates on-demand.
+    
+    GET /api/picks/2026-03-01
     """
     from datetime import datetime as dt
     try:
         dt.strptime(date_str, '%Y-%m-%d')
     except ValueError:
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
-
-    max_matches = request.args.get('max_matches', 10, type=int)
-    max_matches = max(4, min(20, max_matches))
-
+    
     try:
-        # ─── 1. FAST PATH: Check Firestore ───
+        # ─── 1. Fast path: check Firestore for cached picks ───
         db = get_firestore_client()
         doc = db.collection('daily_predictions').document(date_str).get()
         
         if doc.exists:
             data = doc.to_dict()
             matches = data.get('matches', [])
-            
             if matches:
-                # Slice to requested count
-                matches = matches[:max_matches]
-                # Strip result/score fields for today so future games never
-                # appear as already finished in the app (no rebuild needed)
-                matches = _strip_results_for_today(matches, date_str)
-
-                # Calculate combined odds for the slice
-                combined = 1.0
+                combined_odds = 1.0
                 for m in matches:
-                    combined *= float(m.get('odds', 1.0))
-
+                    combined_odds *= float(m.get('odds', 1.0))
+                    
                 print(f"⚡ Serving Firestore picks for {date_str} ({len(matches)} matches)")
                 return jsonify({
                     'date': date_str,
-                    'slip': {
-                        'matches': matches,
-                        'match_count': len(matches),
-                        'combined_odds': round(combined, 2),
-                        'slip_confidence': data.get('slip_confidence', 'HIGH'),
-                    },
-                    'source': 'firestore'
+                    'matches': matches,
+                    'match_count': len(matches),
+                    'combined_odds': round(combined_odds, 2),
+                    'slip_confidence': data.get('slip_confidence', 'HIGH'),
+                    'source': 'firestore',
                 })
-
-        # ─── 2. SLOW PATH: Generate On-Demand (Fallback) ───
+        
+        # ─── 2. Slow path: generate and store ───
         print(f"⚠️ No Firestore doc for {date_str}, generating on-demand...")
         
-        today = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d')
-        if date_str == today:
-            fixtures = fetch_todays_fixtures()
-        else:
-            fixtures = fetch_fixtures_by_date(date_str)
-
+        # Fetch fixtures for requested date (uses a separate call — date-aware)
+        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
+        
         if not fixtures:
             return jsonify({
                 'date': date_str,
-                'slip': {'matches': [], 'match_count': 0},
-                'message': 'No fixtures available.'
+                'matches': [],
+                'match_count': 0,
+                'message': 'No fixtures available for this date.',
             })
-
-        print(f"🧠 AI generating for {date_str} ({len(fixtures)} fixtures)...")
-        clear_cache()
-
-        # Apply market performance penalties for smarter on-demand generation
+        
+        # Apply market performance penalties
         from utils.market_tracker import get_market_penalties
-        _mp = {}
+        market_penalties = {}
         try:
-            _mp = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
+            market_penalties = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
         except Exception:
             pass
-
-        # Generate full 10 matches standard
-        result = build_parlay_slip(
-            fixtures, predictor, stats_calculator,
+        
+        # Generate predictions
+        from services.generator import generate_and_store
+        result = generate_and_store(
+            fixtures, predictor, stats_calculator, sm_stats,
+            sm_proxy=sm_proxy,
             num_matches=10,  # Always generate 10 for storage
             min_odds=1.10,
             max_odds=1.30,
-            sm_stats=sm_stats,
-            free_mode=False,
-            market_penalties=_mp,
+            date_str=date_str,
         )
         
-        # Save to Firestore for next time
-        slip_matches = result.get('slip', {}).get('matches', [])
-        if slip_matches:
-            save_daily_picks(date_str, slip_matches)
+        # Re-read from Firestore (generator writes there)
+        doc = db.collection('daily_predictions').document(date_str).get()
+        if doc.exists:
+            data = doc.to_dict()
+            matches = data.get('matches', [])
             print(f"💾 Saved generated picks to Firestore")
-
-        # Slice for response
-        if len(slip_matches) > max_matches:
-             result['slip']['matches'] = slip_matches[:max_matches]
-             result['slip']['match_count'] = max_matches
-             # Recalculate odds
-             combined = 1.0
-             for m in result['slip']['matches']:
-                 combined *= float(m.get('odds', 1.0))
-             result['slip']['combined_odds'] = round(combined, 2)
-
-        return jsonify(result)
-
+            
+            combined_odds = 1.0
+            for m in matches:
+                combined_odds *= float(m.get('odds', 1.0))
+                
+            return jsonify({
+                'date': date_str,
+                'matches': matches,
+                'match_count': len(matches),
+                'combined_odds': round(combined_odds, 2),
+                'slip_confidence': data.get('slip_confidence', 'HIGH'),
+                'source': 'generated',
+            })
+        
+        return jsonify({
+            'date': date_str,
+            'matches': [],
+            'match_count': 0,
+            'message': 'Could not generate picks.',
+        })
+        
     except Exception as e:
-        print(f"❌ Error in picks_by_date: {e}")
+        print(f"❌ get_daily_picks error: {e}")
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/rollover-picks/<date_str>', methods=['GET'])
+@app.route('/api/rollover-picks/<date_str>')
 def rollover_picks_by_date(date_str):
     """
     Safety-first Rollover picks — generated INDEPENDENTLY from AI Pro.
 
-    Only the safest markets: Over 1.5 Goals, Over 2.5 Goals,
-    Double Chance (1X), Double Chance (X2).
-    Searches ALL leagues (no league filter) to find dominant-team fixtures.
+    Strict market filter (Over 1.5, Over 2.5, DC only), high probability
+    thresholds, dynamic 1-3 picks, combined odds capped at 2.20.
 
-    GET /api/rollover-picks/2026-03-10
+    GET /api/rollover-picks/2026-03-15
     """
     from datetime import datetime as dt
     try:
@@ -344,41 +303,39 @@ def rollover_picks_by_date(date_str):
             data = doc.to_dict()
             matches = data.get('matches', [])
             if matches:
-                matches = _strip_results_for_today(matches, date_str)
+                # Recalculate combined odds from stored matches
                 combined = 1.0
                 for m in matches:
                     combined *= float(m.get('odds', 1.0))
                 print(f"⚡ Serving Firestore rollover picks for {date_str} ({len(matches)} picks)")
                 return jsonify({
                     'date': date_str,
-                    'slip': {
-                        'matches': matches,
-                        'match_count': len(matches),
-                        'combined_odds': round(combined, 2),
-                        'slip_confidence': data.get('slip_confidence', 'HIGH'),
-                    },
+                    'matches': matches,
+                    'match_count': len(matches),
+                    'combined_odds': round(combined, 2),
+                    'slip_confidence': data.get('slip_confidence', 'VERY_HIGH'),
                     'source': 'firestore',
                 })
 
         # ─── 2. Slow path: generate on-demand ───
         print(f"⚠️ No rollover doc for {date_str}, generating on-demand...")
-        from utils.fixture_fetcher import fetch_fixtures_for_rollover
         from services.rollover_generator import generate_rollover_picks
 
-        fixtures = fetch_fixtures_for_rollover(date_str)
+        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
 
         if not fixtures:
             return jsonify({
                 'date': date_str,
-                'slip': {'matches': [], 'match_count': 0},
-                'message': 'No fixtures available for rollover.',
+                'matches': [],
+                'match_count': 0,
+                'message': 'No fixtures available.',
             })
 
-        # Apply market performance penalties for smarter rollover generation
+        # Apply market performance penalties
         from utils.market_tracker import get_market_penalties as _get_mp
-        _rollover_mp = {}
+        _mp = {}
         try:
-            _rollover_mp = _get_mp(sm_proxy, lookback_days=7, min_picks=3)
+            _mp = _get_mp(sm_proxy, lookback_days=7, min_picks=3)
         except Exception:
             pass
 
@@ -386,36 +343,36 @@ def rollover_picks_by_date(date_str):
             fixtures, predictor, stats_calculator, sm_stats,
             sm_proxy=sm_proxy,
             date_str=date_str,
-            market_penalties=_rollover_mp,
+            market_penalties=_mp,
         )
 
         if result['status'] == 'success':
-            doc2 = db.collection('daily_rollover').document(date_str).get()
-            if doc2.exists:
-                data2 = doc2.to_dict()
-                matches2 = data2.get('matches', [])
-                combined2 = 1.0
-                for m in matches2:
-                    combined2 *= float(m.get('odds', 1.0))
+            # Re-read fresh doc
+            doc = db.collection('daily_rollover').document(date_str).get()
+            if doc.exists:
+                data = doc.to_dict()
+                matches = data.get('matches', [])
+                combined = 1.0
+                for m in matches:
+                    combined *= float(m.get('odds', 1.0))
                 return jsonify({
                     'date': date_str,
-                    'slip': {
-                        'matches': matches2,
-                        'match_count': len(matches2),
-                        'combined_odds': round(combined2, 2),
-                        'slip_confidence': data2.get('slip_confidence', 'HIGH'),
-                    },
+                    'matches': matches,
+                    'match_count': len(matches),
+                    'combined_odds': round(combined, 2),
+                    'slip_confidence': data.get('slip_confidence', 'VERY_HIGH'),
                     'source': 'generated',
                 })
 
         return jsonify({
             'date': date_str,
-            'slip': {'matches': [], 'match_count': 0},
+            'matches': [],
+            'match_count': 0,
             'message': result.get('message', 'No rollover picks available.'),
         })
 
     except Exception as e:
-        print(f"❌ Error in rollover_picks_by_date: {e}")
+        print(f"❌ rollover_picks_by_date error: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -460,10 +417,9 @@ def ai_pro_picks_by_date(date_str):
 
         # ─── 2. Slow path: generate on-demand ───
         print(f"⚠️ No AI Pro doc for {date_str}, generating on-demand...")
-        from utils.fixture_fetcher import fetch_todays_fixtures
         from services.ai_pro_generator import generate_ai_pro_picks
 
-        fixtures = fetch_todays_fixtures(date_str)
+        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
 
         if not fixtures:
             return jsonify({
@@ -508,24 +464,17 @@ def ai_pro_picks_by_date(date_str):
         })
 
     except Exception as e:
-        print(f"❌ Error in ai_pro_picks_by_date: {e}")
+        print(f"❌ ai_pro_picks_by_date error: {e}")
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/free-picks/<date_str>', methods=['GET'])
+@app.route('/api/free-picks/<date_str>')
 def free_picks_by_date(date_str):
     """
-    Free picks endpoint.
-    AI Pro is SAFER than free. Free picks are riskier teasers.
+    Free Tab picks — curated matches from daily_predictions (matches 5-10).
+    Combined odds enforced to 1.60-2.00 range.
 
-    Rules:
-      - 6 matches per day
-      - Individual odds: 1.10 - 1.30
-      - Combined odds: 1.60 - 2.00
-      - Must NOT use same game as AI Pro (if same game, different market)
-      - Top 2 safest picks LOCKED (is_free=false, blurred), rest unlocked (is_free=true)
-
-    GET /api/free-picks/2026-02-19
+    GET /api/free-picks/2026-03-15
     """
     from datetime import datetime as dt
     try:
@@ -534,228 +483,177 @@ def free_picks_by_date(date_str):
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
 
     try:
-        cache_key = f"free_picks_v5_{date_str}"
-        cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
-        if cached is not None:
-            print(f"⚡ Serving cached /api/free-picks/{date_str}")
-            return jsonify(cached)
+        db = get_firestore_client()
+        doc = db.collection('daily_predictions').document(date_str).get()
 
-        today = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d')
-        if date_str == today:
-            fixtures = fetch_todays_fixtures()
-        else:
-            fixtures = fetch_fixtures_by_date(date_str)
+        if not doc.exists:
+            # Trigger generation
+            fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
+            if fixtures:
+                from services.generator import generate_and_store
+                generate_and_store(
+                    fixtures, predictor, stats_calculator, sm_stats,
+                    sm_proxy=sm_proxy,
+                    num_matches=10,
+                    min_odds=1.10,
+                    max_odds=1.30,
+                    date_str=date_str,
+                )
+                doc = db.collection('daily_predictions').document(date_str).get()
 
-        if not fixtures:
+        if not doc.exists:
             return jsonify({
                 'date': date_str,
-                'total_fixtures_analyzed': 0,
-                'slip': {
-                    'matches': [],
-                    'match_count': 0,
-                    'combined_odds': 0,
-                    'slip_confidence': 'NONE',
-                },
+                'matches': [],
+                'match_count': 0,
+                'message': 'No predictions available.',
             })
 
-        # ── Step 1: Get AI Pro picks — exclude same game (allow same match if different market) ──
-        pro_cache_key = f"picks_pro_{date_str}"
-        pro_cached = sm_proxy.get_cache(pro_cache_key, ttl=3600)
-        exclude_match_markets = set()
+        data = doc.to_dict()
+        all_matches = data.get('matches', [])
 
-        if pro_cached:
-            pro_matches = pro_cached.get('slip', {}).get('matches', [])
-            for pm in pro_matches:
-                key = f"{pm.get('home_team', '')}_{pm.get('away_team', '')}_{pm.get('market', '')}"
-                exclude_match_markets.add(key)
-            print(f"🚫 Excluding {len(exclude_match_markets)} AI Pro match+market combos")
-        else:
-            print("⚠️ AI Pro picks not cached yet — free picks may overlap (will fix on next call)")
-
-        # ── Step 2: Build free slip — odds 1.10-1.30, combined 1.60-2.00 ──
-        print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
-              f"odds 1.10-1.30, max 6 matches, combined 1.60-2.00")
-        clear_cache()
-
-        # Apply market performance penalties
-        from utils.market_tracker import get_market_penalties
-        _free_mp = {}
-        try:
-            _free_mp = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
-        except Exception:
-            pass
-
-        result = build_parlay_slip(
-            fixtures, predictor, stats_calculator,
-            num_matches=6,
-            min_odds=1.10,
-            max_odds=1.30,
-            sm_stats=sm_stats,
-            free_mode=False,  # Use strict safety rules
-            exclude_match_markets=exclude_match_markets,
-            market_penalties=_free_mp,
-        )
-        result['date'] = date_str
+        # Free picks = matches 5-10 (indices 4-9)
+        free_matches = all_matches[4:10] if len(all_matches) > 4 else []
 
         # ── Step 3: Enforce combined odds 1.60-2.00 ──
-        matches = result.get('slip', {}).get('matches', [])
-        combined = result.get('slip', {}).get('combined_odds', 0)
+        MIN_FREE_COMBINED = 1.60
+        MAX_FREE_COMBINED = 2.00
 
-        # If combined > 2.00, drop highest-odds picks until within range
-        if combined > 2.00 and len(matches) > 2:
-            indexed = sorted(enumerate(matches), key=lambda x: x[1].get('odds', 0), reverse=True)
-            while combined > 2.00 and len(indexed) > 2:
-                _, drop_match = indexed.pop(0)
-                combined /= drop_match.get('odds', 1)
-            keep_indices = {x[0] for x in indexed}
-            matches = [m for i, m in enumerate(matches) if i in keep_indices]
-            result['slip']['matches'] = matches
-            result['slip']['match_count'] = len(matches)
-            result['slip']['combined_odds'] = round(combined, 2)
+        def calc_combined(lst):
+            odds = 1.0
+            for m in lst:
+                odds *= float(m.get('odds', 1.0))
+            return odds
 
-        # ── Step 4: Lock top 2 safest, unlock the rest ──
-        # Top 2 safest = LOCKED (blurred, need subscription)
-        # Rest = unlocked (is_free=true, shown freely)
-        sorted_by_safety = sorted(
-            enumerate(matches),
-            key=lambda x: x[1].get('ai_probability', 0),
-            reverse=True,
-        )
+        # Cap: remove highest-odds pick until combined ≤ max
+        while len(free_matches) > 1 and calc_combined(free_matches) > MAX_FREE_COMBINED:
+            free_matches.sort(key=lambda x: float(x.get('odds', 1.0)), reverse=True)
+            free_matches.pop(0)
 
-        for rank, (idx, _) in enumerate(sorted_by_safety):
-            matches[idx]['is_free'] = rank >= 2  # Top 2 safest = LOCKED (is_free=false)
+        # Floor: if combined < min, try adding from remaining pool
+        if calc_combined(free_matches) < MIN_FREE_COMBINED:
+            used_keys = {f"{m.get('home_team')}_{m.get('away_team')}" for m in free_matches}
+            extras = [m for m in all_matches if f"{m.get('home_team')}_{m.get('away_team')}" not in used_keys]
+            for extra in extras:
+                test = free_matches + [extra]
+                combined = calc_combined(test)
+                if combined <= MAX_FREE_COMBINED:
+                    free_matches = test
+                    used_keys.add(f"{extra.get('home_team')}_{extra.get('away_team')}")
+                    if combined >= MIN_FREE_COMBINED:
+                        break
 
-        sm_proxy.set_cache(cache_key, result)
-        return jsonify(result)
+        combined = calc_combined(free_matches)
+
+        return jsonify({
+            'date': date_str,
+            'matches': free_matches,
+            'match_count': len(free_matches),
+            'combined_odds': round(combined, 2),
+            'slip_confidence': data.get('slip_confidence', 'HIGH'),
+            'source': 'firestore',
+        })
 
     except Exception as e:
-        print(f"❌ Error in /api/free-picks/{date_str}: {e}")
+        print(f"❌ free_picks_by_date error: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/parlay', methods=['GET'])
-def parlay_predictions():
+
+@app.route('/api/parlay/ai')
+def ai_parlay():
     """
     AI Parlay - generate higher-odds multi-match slips.
     
-    GET /api/parlay
     Query params:
-        num_matches: int (2-20, default 5)
-        min_odds: float (default 1.30)
-        max_odds: float (default 3.00)
+    - num_matches: Max matches (default 3)
     """
     try:
-        num_matches = int(request.args.get('num_matches', 5))
-        min_odds = float(request.args.get('min_odds', 1.30))
-        max_odds = float(request.args.get('max_odds', 3.00))
-
-        num_matches = min(max(num_matches, 2), 20)
-        min_odds = min(max(min_odds, 1.10), 5.0)
-        max_odds = min(max(max_odds, min_odds + 0.1), 10.0)
-
-        print(f"🎰 Parlay: {num_matches} matches, odds {min_odds}-{max_odds}")
-        fixtures = fetch_todays_fixtures()
-
-        if not fixtures:
-            return jsonify({
-                'date': __import__('datetime').datetime.utcnow().strftime('%Y-%m-%d'),
-                'total_fixtures_analyzed': 0,
-                'slip': {
-                    'matches': [],
-                    'match_count': 0,
-                    'combined_odds': 0,
-                    'slip_confidence': 'NONE',
-                },
-                'all_predictions': [],
-                'message': 'No fixtures available right now.',
-            })
-
+        fixtures = sm_proxy.get_cached_fixtures().get('fixtures', [])
+        num_matches = int(request.args.get('num_matches', 3))
+        
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
             num_matches=num_matches,
-            min_odds=min_odds,
-            max_odds=max_odds,
+            min_odds=1.30,
+            max_odds=2.50,
             sm_stats=sm_stats,
+            free_mode=False
         )
-
-        print(f"✅ Parlay: {result['slip']['match_count']} matches, "
-              f"odds {result['slip']['combined_odds']}")
-
         return jsonify(result)
-
     except Exception as e:
-        print(f"❌ Error in /api/parlay: {e}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/teams', methods=['GET'])
-def list_teams():
-    """List all teams in the database"""
-    teams = stats_calculator.get_all_teams()
-    return jsonify({'teams': teams, 'count': len(teams)})
 
-# ── SportMonks Proxy Endpoints (cached, token stays server-side) ──
-
-@app.route('/api/livescores', methods=['GET'])
-def livescores():
-    """
-    Return cached live scores. Backend polls SportMonks every 2 min.
-    Clients call this instead of SportMonks directly.
-    """
+@app.route('/api/team/<int:team_id>/stats')
+def get_team_stats(team_id):
+    """Get live team stats from SportMonks"""
     try:
-        data = sm_proxy.get_livescores()
-        return jsonify(data)
+        stats = fetch_team_stats(team_id)
+        return jsonify(stats)
     except Exception as e:
-        print(f"❌ Error in /api/livescores: {e}")
-        return jsonify({'error': str(e), 'fixtures': []}), 500
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/api/fixtures/<date_str>', methods=['GET'])
-def fixtures_by_date(date_str):
-    """
-    Return cached fixtures for a date. 10-min cache TTL.
-    Clients call this instead of SportMonks directly.
-    """
-    try:
-        data = sm_proxy.get_fixtures(date_str)
-        return jsonify(data)
-    except Exception as e:
-        print(f"❌ Error in /api/fixtures/{date_str}: {e}")
-        return jsonify({'error': str(e), 'fixtures': []}), 500
 
-@app.route('/api/leagues', methods=['GET'])
-def leagues():
-    """
-    Return cached leagues from SportMonks. 24-hour cache TTL.
-    """
+@app.route('/api/h2h/<int:team1_id>/<int:team2_id>')
+def get_h2h_stats(team1_id, team2_id):
+    """Get head-to-head stats between two teams"""
     try:
-        data = sm_proxy.get_leagues()
-        return jsonify(data)
+        h2h = fetch_h2h(team1_id, team2_id)
+        return jsonify(h2h)
     except Exception as e:
-        print(f"❌ Error in /api/leagues: {e}")
-        return jsonify({'error': str(e), 'leagues': []}), 500
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/markets')
+def list_markets():
+    """List all supported betting markets"""
+    from config import MARKET_DEFINITIONS
+    return jsonify({
+        'markets': list(MARKET_DEFINITIONS.keys()),
+        'count': len(MARKET_DEFINITIONS)
+    })
+
+
+@app.route('/api/confidence-levels')
+def confidence_levels():
+    """Explain confidence level calculation"""
+    return jsonify({
+        'levels': {
+            'VERY_HIGH': 'Composite score ≥ 0.55 — Strongest confidence',
+            'HIGH': 'Composite score 0.50-0.55 — High confidence',
+            'MEDIUM': 'Composite score 0.45-0.50 — Moderate confidence',
+            'LOW': 'Composite score < 0.45 — Lower confidence',
+        },
+        'composite_score': 'Blend of AI probability, edge over bookmaker, and statistical stability'
+    })
+
 
 @app.route('/api/register-token', methods=['POST'])
-def register_token():
+def register_fcm_token():
     """
-    Register a device FCM token for push notifications.
-    Called by the Flutter app on startup after requesting notification permission.
+    Register an FCM token for push notifications.
 
     POST /api/register-token
-    Body: {"token": "<fcm_token>", "platform": "android"|"ios"}
+    Body: {"token": "fcm_token_here", "device_id": "optional_device_id"}
     """
     try:
         data = request.json or {}
-        token = (data.get('token') or '').strip()
-        platform = data.get('platform', 'unknown')
+        token = data.get('token', '').strip()
+        device_id = data.get('device_id', '')
 
         if not token:
-            return jsonify({'error': 'token is required'}), 400
+            return jsonify({'error': 'Missing token'}), 400
 
-        from utils.push_notifier import register_token as _reg
-        success = _reg(token, platform)
-        if success:
-            return jsonify({'status': 'registered'})
-        return jsonify({'error': 'failed to register token'}), 500
+        db = get_firestore_client()
+        doc_id = device_id if device_id else token[:64]
+        db.collection('fcm_tokens').document(doc_id).set({
+            'token': token,
+            'device_id': device_id,
+            'updated_at': __import__('datetime').datetime.utcnow().isoformat(),
+        }, merge=True)
+
+        return jsonify({'status': 'registered', 'doc_id': doc_id})
     except Exception as e:
-        print(f"❌ register-token error: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -821,6 +719,131 @@ def generate_daily():
     return jsonify({
         'status': 'started',
         'message': 'Generation started in background. Picks will be ready in ~60s.',
+    }), 202
+
+
+@app.route('/api/regenerate', methods=['POST'])
+def regenerate_picks():
+    """
+    Force regenerate today's picks with latest server settings.
+    Deletes cached Firestore docs and regenerates fresh.
+    Protected by CRON_SECRET Bearer token.
+
+    POST /api/regenerate
+    Header: Authorization: Bearer <CRON_SECRET>
+    Body (optional): {"tabs": ["ai_pro", "rollover", "free"], "date": "2026-03-19"}
+    
+    Defaults to all tabs and today's date if not specified.
+    """
+    from datetime import datetime as dt
+    import threading
+
+    # ── Auth check ──
+    cron_secret = os.environ.get('CRON_SECRET', '').strip()
+    auth_header = request.headers.get('Authorization', '')
+    if not cron_secret or auth_header != f'Bearer {cron_secret}':
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    data = request.json or {}
+    tabs = data.get('tabs', ['ai_pro', 'rollover', 'free'])
+    date_str = data.get('date', dt.utcnow().strftime('%Y-%m-%d'))
+
+    # Validate date
+    try:
+        dt.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    def _regenerate():
+        db = get_firestore_client()
+        results = {}
+
+        # Get market penalties once
+        from utils.market_tracker import get_market_penalties
+        market_penalties = {}
+        try:
+            market_penalties = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
+        except Exception:
+            pass
+
+        # Fetch fixtures once
+        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
+        if not fixtures:
+            print(f"❌ Regenerate: No fixtures for {date_str}")
+            return
+
+        # ── AI Pro ──
+        if 'ai_pro' in tabs:
+            try:
+                # Delete old doc
+                db.collection('daily_ai_pro').document(date_str).delete()
+                print(f"🗑️ Deleted daily_ai_pro/{date_str}")
+
+                # Regenerate
+                from services.ai_pro_generator import generate_ai_pro_picks
+                result = generate_ai_pro_picks(
+                    fixtures, predictor, stats_calculator, sm_stats,
+                    sm_proxy=sm_proxy,
+                    date_str=date_str,
+                    market_penalties=market_penalties,
+                )
+                results['ai_pro'] = result.get('status', 'unknown')
+                print(f"✅ Regenerated AI Pro: {result.get('tip_count', 0)} tips, odds {result.get('combined_odds', 0)}")
+            except Exception as e:
+                results['ai_pro'] = f'error: {e}'
+                print(f"❌ AI Pro regenerate error: {e}")
+
+        # ── Rollover ──
+        if 'rollover' in tabs:
+            try:
+                db.collection('daily_rollover').document(date_str).delete()
+                print(f"🗑️ Deleted daily_rollover/{date_str}")
+
+                from services.rollover_generator import generate_rollover_picks
+                result = generate_rollover_picks(
+                    fixtures, predictor, stats_calculator, sm_stats,
+                    sm_proxy=sm_proxy,
+                    date_str=date_str,
+                    market_penalties=market_penalties,
+                )
+                results['rollover'] = result.get('status', 'unknown')
+                print(f"✅ Regenerated Rollover: {result.get('match_count', 0)} picks, odds {result.get('combined_odds', 0)}")
+            except Exception as e:
+                results['rollover'] = f'error: {e}'
+                print(f"❌ Rollover regenerate error: {e}")
+
+        # ── Free (uses daily_predictions) ──
+        if 'free' in tabs:
+            try:
+                db.collection('daily_predictions').document(date_str).delete()
+                print(f"🗑️ Deleted daily_predictions/{date_str}")
+
+                from services.generator import generate_and_store
+                result = generate_and_store(
+                    fixtures, predictor, stats_calculator, sm_stats,
+                    sm_proxy=sm_proxy,
+                    num_matches=10,
+                    min_odds=1.10,
+                    max_odds=1.30,
+                    date_str=date_str,
+                )
+                results['free'] = result.get('status', 'unknown')
+                print(f"✅ Regenerated Free/Daily: {result.get('match_count', 0)} matches")
+            except Exception as e:
+                results['free'] = f'error: {e}'
+                print(f"❌ Free regenerate error: {e}")
+
+        print(f"✅ Regeneration complete for {date_str}: {results}")
+
+    # Run in background thread to avoid timeout
+    thread = threading.Thread(target=_regenerate, daemon=True)
+    thread.start()
+
+    return jsonify({
+        'status': 'started',
+        'date': date_str,
+        'tabs': tabs,
+        'message': f'Regenerating {", ".join(tabs)} for {date_str}. Ready in ~30-60s.',
     }), 202
 
 
