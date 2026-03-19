@@ -289,7 +289,7 @@ def picks_by_date(date_str):
             fixtures, predictor, stats_calculator,
             num_matches=10,  # Always generate 10 for storage
             min_odds=1.10,
-            max_odds=1.60,
+            max_odds=1.30,
             sm_stats=sm_stats,
             free_mode=False,
             market_penalties=_mp,
@@ -520,8 +520,8 @@ def free_picks_by_date(date_str):
 
     Rules:
       - 6 matches per day
-      - Individual odds: 1.10 - 1.57
-      - Combined odds: 1.99 - 4.50
+      - Individual odds: 1.10 - 1.30
+      - Combined odds: 1.60 - 2.00
       - Must NOT use same game as AI Pro (if same game, different market)
       - Top 2 safest picks LOCKED (is_free=false, blurred), rest unlocked (is_free=true)
 
@@ -572,9 +572,9 @@ def free_picks_by_date(date_str):
         else:
             print("⚠️ AI Pro picks not cached yet — free picks may overlap (will fix on next call)")
 
-        # ── Step 2: Build free slip — odds 1.10-1.57, combined 1.99-4.50 ──
+        # ── Step 2: Build free slip — odds 1.10-1.30, combined 1.60-2.00 ──
         print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
-              f"odds 1.10-1.57, max 6 matches, combined 1.99-4.50")
+              f"odds 1.10-1.30, max 6 matches, combined 1.60-2.00")
         clear_cache()
 
         # Apply market performance penalties
@@ -589,7 +589,7 @@ def free_picks_by_date(date_str):
             fixtures, predictor, stats_calculator,
             num_matches=6,
             min_odds=1.10,
-            max_odds=1.57,
+            max_odds=1.30,
             sm_stats=sm_stats,
             free_mode=False,  # Use strict safety rules
             exclude_match_markets=exclude_match_markets,
@@ -597,14 +597,14 @@ def free_picks_by_date(date_str):
         )
         result['date'] = date_str
 
-        # ── Step 3: Enforce combined odds 1.99-4.50 ──
+        # ── Step 3: Enforce combined odds 1.60-2.00 ──
         matches = result.get('slip', {}).get('matches', [])
         combined = result.get('slip', {}).get('combined_odds', 0)
 
-        # If combined > 4.50, drop highest-odds picks until within range
-        if combined > 4.50 and len(matches) > 4:
+        # If combined > 2.00, drop highest-odds picks until within range
+        if combined > 2.00 and len(matches) > 2:
             indexed = sorted(enumerate(matches), key=lambda x: x[1].get('odds', 0), reverse=True)
-            while combined > 4.50 and len(indexed) > 4:
+            while combined > 2.00 and len(indexed) > 2:
                 _, drop_match = indexed.pop(0)
                 combined /= drop_match.get('odds', 1)
             keep_indices = {x[0] for x in indexed}

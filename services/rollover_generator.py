@@ -47,10 +47,10 @@ ROLLOVER_MIN_COMPOSITE = {
 ROLLOVER_MIN_EDGE = 0.06
 
 # Max single-pick odds for Rollover — keeps each pick very safe
-ROLLOVER_MAX_SINGLE_ODDS = 1.50
+ROLLOVER_MAX_SINGLE_ODDS = 1.30
 
 # Max combined odds for the entire slip — prevents risky accumulation
-ROLLOVER_MAX_COMBINED_ODDS = 2.20
+ROLLOVER_MAX_COMBINED_ODDS = 2.00
 
 # Max picks per slip — reduced from 5 to 3 for higher daily win rate
 ROLLOVER_MAX_PICKS = 3
@@ -190,6 +190,40 @@ def generate_rollover_picks(
             'match_count': 0,
             'message': 'Could not build rollover slip from available picks.',
         }
+
+    # ── Enforce combined odds 1.50–2.00 ──────────────────────────────────────
+    ROLLOVER_MIN_COMBINED = 1.50
+    ROLLOVER_MAX_COMBINED = 2.00
+
+    # Cap: remove highest-odds pick until combined ≤ max
+    while len(slip_matches) > 1:
+        combined_odds = 1.0
+        for o in slip_matches:
+            combined_odds *= o['odds']
+        if combined_odds <= ROLLOVER_MAX_COMBINED:
+            break
+        slip_matches.sort(key=lambda x: x['odds'], reverse=True)
+        slip_matches.pop(0)
+
+    # Recalculate combined_odds after enforcement
+    combined_odds = 1.0
+    for o in slip_matches:
+        combined_odds *= o['odds']
+
+    # Floor: if combined < min, try adding more safe options
+    if combined_odds < ROLLOVER_MIN_COMBINED:
+        used_matches_final = {f"{o['home_team']}_{o['away_team']}" for o in slip_matches}
+        for opt in safe_options:
+            match_key = f"{opt['home_team']}_{opt['away_team']}"
+            if match_key in used_matches_final:
+                continue
+            test_combined = combined_odds * opt['odds']
+            if test_combined <= ROLLOVER_MAX_COMBINED:
+                slip_matches.append(opt)
+                combined_odds = test_combined
+                used_matches_final.add(match_key)
+                if combined_odds >= ROLLOVER_MIN_COMBINED:
+                    break
 
     formatted = format_slip_matches(slip_matches)
     conf = slip_confidence(slip_matches)

@@ -20,7 +20,7 @@ def generate_and_store(
     *,
     num_matches=10,
     min_odds=1.10,
-    max_odds=1.60,
+    max_odds=1.30,
     save_sqlite_fn=None,
     sm_proxy=None,
     date_str=None,
@@ -91,7 +91,27 @@ def generate_and_store(
             'message': 'AI could not generate matches for today.',
         }
 
-    print(f"✅ Generator: {len(matches)} matches, combined odds: {slip.get('combined_odds', 0)}")
+    # ── Enforce combined odds ranges per tab ──────────────────────────────
+    # AI Pro = first 4 picks → combined 1.90–2.20
+    # Free   = next 6 picks  → combined 1.60–2.00
+    ai_pro = matches[:4]
+    free   = matches[4:10]
+
+    ai_pro = _enforce_combined_odds(ai_pro, min_combined=1.90, max_combined=2.20, all_pool=matches)
+    free   = _enforce_combined_odds(free, min_combined=1.60, max_combined=2.00, all_pool=matches, exclude=ai_pro)
+
+    matches = ai_pro + free
+    slip['matches'] = matches
+    slip['match_count'] = len(matches)
+
+    # Recalculate overall combined odds
+    overall = 1.0
+    for m in matches:
+        overall *= float(m.get('odds', 1.0))
+    slip['combined_odds'] = round(overall, 2)
+
+    print(f"✅ Generator: {len(matches)} matches (AI Pro: {len(ai_pro)}, Free: {len(free)}), "
+          f"AI Pro odds: {round(_calc_combined(ai_pro), 2)}, Free odds: {round(_calc_combined(free), 2)}")
 
     # Write to Firestore
     db = get_firestore_client()
@@ -176,3 +196,47 @@ def _cleanup_old_predictions(db):
             print(f"🗑️ Generator: Deleted {deleted} old docs (before {cutoff})")
     except Exception as e:
         print(f"⚠️ Generator: Cleanup failed (non-fatal): {e}")
+
+
+def _calc_combined(matches):
+    """Calculate combined odds for a list of matches."""
+    odds = 1.0
+    for m in matches:
+        odds *= float(m.get('odds', 1.0))
+    return odds
+
+
+def _enforce_combined_odds(picks, *, min_combined, max_combined, all_pool, exclude=None):
+    """
+    Enforce combined odds within [min_combined, max_combined].
+    - If too high: drop the highest-odds pick.
+    - If too low: add picks from all_pool that aren't already used.
+    """
+    result = list(picks)
+    exclude_keys = set()
+    if exclude:
+        exclude_keys = {f"{m.get('home_team')}_{m.get('away_team')}" for m in exclude}
+
+    # Cap: remove highest-odds pick until combined ≤ max
+    while len(result) > 1 and _calc_combined(result) > max_combined:
+        result.sort(key=lambda m: float(m.get('odds', 1.0)), reverse=True)
+        result.pop(0)
+
+    # Floor: add picks from pool if combined < min
+    if _calc_combined(result) < min_combined:
+        used_keys = {f"{m.get('home_team')}_{m.get('away_team')}" for m in result}
+        used_keys.update(exclude_keys)
+        extras = [
+            m for m in all_pool
+            if f"{m.get('home_team')}_{m.get('away_team')}" not in used_keys
+        ]
+        for extra in extras:
+            test = result + [extra]
+            combined = _calc_combined(test)
+            if combined <= max_combined:
+                result = test
+                used_keys.add(f"{extra.get('home_team')}_{extra.get('away_team')}")
+                if combined >= min_combined:
+                    break
+
+    return result
