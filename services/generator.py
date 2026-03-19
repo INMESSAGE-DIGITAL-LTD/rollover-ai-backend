@@ -35,7 +35,7 @@ def generate_and_store(
         sm_stats: SportMonks stats proxy.
         num_matches: Max matches to generate (default 10).
         min_odds: Minimum odds filter (default 1.10).
-        max_odds: Maximum odds filter (default 1.60).
+        max_odds: Maximum odds filter (default 1.30).
         save_sqlite_fn: Optional callable(date_str, picks_list) for SQLite backup.
 
     Returns:
@@ -92,13 +92,14 @@ def generate_and_store(
         }
 
     # ── Enforce combined odds ranges per tab ──────────────────────────────
-    # AI Pro = first 4 picks → combined 1.90–2.20
-    # Free   = next 6 picks  → combined 1.60–2.00
+    # AI Pro = first 4 picks → combined 1.40–1.80 (safe: ~50-65% daily win rate)
+    # Free   = next 6 picks  → combined 1.40–1.80
+    # Previous 1.90-2.20 for AI Pro was too risky (~30% daily win rate).
     ai_pro = matches[:4]
     free   = matches[4:10]
 
-    ai_pro = _enforce_combined_odds(ai_pro, min_combined=1.90, max_combined=2.20, all_pool=matches)
-    free   = _enforce_combined_odds(free, min_combined=1.60, max_combined=2.00, all_pool=matches, exclude=ai_pro)
+    ai_pro = _enforce_combined_odds(ai_pro, min_combined=1.40, max_combined=1.80, all_pool=matches)
+    free   = _enforce_combined_odds(free, min_combined=1.40, max_combined=1.80, all_pool=matches, exclude=ai_pro)
 
     matches = ai_pro + free
     slip['matches'] = matches
