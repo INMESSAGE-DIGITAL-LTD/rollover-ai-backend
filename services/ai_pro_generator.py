@@ -6,7 +6,7 @@ Strategy:
   - Broader market selection than Rollover: Over 1.5/2.5, Home Win, Away Win,
     Double Chance (1X/X2)
   - Dynamic pick count: 1-3 tips based on what qualifies (quality over quantity)
-  - STRICT odds limits: per-pick ≤1.35, combined 1.90-2.20
+  - STRICT odds limits: per-pick ≤1.50, combined 1.80-2.50
   - Real odds from SportMonks (not hardcoded estimates)
   - Market penalties applied to avoid repeating losing patterns
   - Stores results in Firestore daily_ai_pro/{date_str}
@@ -30,39 +30,39 @@ AI_PRO_ALLOWED_MARKETS = {
     'Double Chance (X2)',
 }
 
-# Minimum AI probability per market — RAISED to match rollover safety
+# Minimum AI probability per market — balanced: strict enough to win, loose enough to find picks
 AI_PRO_MIN_PROB = {
-    'Over 1.5 Goals':     0.76,
-    'Over 2.5 Goals':     0.72,
-    'Home Win':           0.68,
-    'Away Win':           0.68,
-    'Double Chance (1X)': 0.78,
-    'Double Chance (X2)': 0.76,
+    'Over 1.5 Goals':     0.72,
+    'Over 2.5 Goals':     0.68,
+    'Home Win':           0.62,
+    'Away Win':           0.62,
+    'Double Chance (1X)': 0.74,
+    'Double Chance (X2)': 0.72,
 }
 
-# Minimum composite score per market — RAISED
+# Minimum composite score per market
 AI_PRO_MIN_COMPOSITE = {
-    'Over 1.5 Goals':     0.52,
-    'Over 2.5 Goals':     0.50,
-    'Home Win':           0.50,
-    'Away Win':           0.50,
-    'Double Chance (1X)': 0.53,
-    'Double Chance (X2)': 0.52,
+    'Over 1.5 Goals':     0.48,
+    'Over 2.5 Goals':     0.46,
+    'Home Win':           0.46,
+    'Away Win':           0.46,
+    'Double Chance (1X)': 0.49,
+    'Double Chance (X2)': 0.48,
 }
 
-# Minimum edge required (model_prob - implied_prob) — matched to rollover
-AI_PRO_MIN_EDGE = 0.06
+# Minimum edge required (model_prob - implied_prob)
+AI_PRO_MIN_EDGE = 0.05
 
-# Odds limits per pick — TIGHTENED: was 2.50, now matches "2 odds or less" goal
+# Odds limits per pick — allows up to 1.50 for slightly more variety
 AI_PRO_MIN_ODDS = 1.10
-AI_PRO_MAX_ODDS = 1.35
+AI_PRO_MAX_ODDS = 1.50
 
-# Max picks per day — reduced from 4 to 3 (fewer picks = higher win rate)
+# Max picks per day — dynamic 1-3 based on what qualifies
 AI_PRO_MAX_PICKS = 3
 
-# Combined odds range — TIGHTENED: was 6.00 max with no floor
-AI_PRO_MIN_COMBINED_ODDS = 1.90
-AI_PRO_MAX_COMBINED_ODDS = 2.20
+# Combined odds range — user wants "2 odds or less" so cap at 2.50
+AI_PRO_MIN_COMBINED_ODDS = 1.80
+AI_PRO_MAX_COMBINED_ODDS = 2.50
 
 # Max 1 pick of the same market type (force full diversity)
 AI_PRO_MAX_SAME_MARKET = 1
@@ -160,8 +160,8 @@ def generate_ai_pro_picks(
     qualified = [
         o for o in all_options
         if o['market'] in AI_PRO_ALLOWED_MARKETS
-        and o['ai_prob'] >= AI_PRO_MIN_PROB.get(o['market'], 0.70)
-        and o['composite_score'] >= AI_PRO_MIN_COMPOSITE.get(o['market'], 0.50)
+        and o['ai_prob'] >= AI_PRO_MIN_PROB.get(o['market'], 0.65)
+        and o['composite_score'] >= AI_PRO_MIN_COMPOSITE.get(o['market'], 0.46)
         and o.get('edge', 0) >= AI_PRO_MIN_EDGE
         and o['odds'] >= AI_PRO_MIN_ODDS
         and o['odds'] <= AI_PRO_MAX_ODDS
@@ -175,7 +175,7 @@ def generate_ai_pro_picks(
                 opt['composite_score'] *= market_penalties[mkt]
         qualified = [
             o for o in qualified
-            if o['composite_score'] >= AI_PRO_MIN_COMPOSITE.get(o['market'], 0.50)
+            if o['composite_score'] >= AI_PRO_MIN_COMPOSITE.get(o['market'], 0.46)
         ]
 
     print(f"🧠 AI Pro Generator: {len(qualified)} options after filtering")
@@ -231,7 +231,7 @@ def generate_ai_pro_picks(
             'message': 'Could not build AI Pro slip from available picks.',
         }
 
-    # ── Enforce combined odds 1.90–2.20 ──────────────────────────────────────
+    # ── Enforce combined odds 1.80–2.50 ──────────────────────────────────────
     # Cap: remove highest-odds pick until combined ≤ max
     while len(selected) > 1:
         combined_odds = 1.0
