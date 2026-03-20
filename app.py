@@ -49,7 +49,7 @@ print("✅ SportMonks live stats module ready!")
 def home():
     return jsonify({
         "service": "Rollover AI Prediction API",
-        "version": "2.3.0",
+        "version": "2.4.0",
         "status": "running",
         "models_loaded": len(predictor.models),
         "engine": "hybrid (SportMonks + XGBoost + Statistical Qualification)",
@@ -107,38 +107,53 @@ def predict():
 
 @app.route('/api/fixtures')
 def get_fixtures():
-    """Get today's fixtures from SportMonks"""
+    """Get today's fixtures with live scores from SportMonks proxy."""
+    from datetime import datetime as dt
     try:
-        fixtures = sm_proxy.get_cached_fixtures()
+        today = dt.utcnow().strftime('%Y-%m-%d')
+        result = sm_proxy.get_fixtures(today)
         return jsonify({
-            'date': fixtures.get('date', ''),
-            'fixtures': fixtures.get('fixtures', []),
-            'count': len(fixtures.get('fixtures', []))
+            'date': today,
+            'fixtures': result.get('fixtures', []),
+            'count': result.get('count', 0),
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/livescores')
+def get_livescores():
+    """Get currently in-play fixtures with live scores (polled every 2 min)."""
+    try:
+        result = sm_proxy.get_livescores()
+        return jsonify({
+            'fixtures': result.get('fixtures', []),
+            'count': result.get('count', 0),
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'fixtures': [], 'count': 0}), 500
+
+
 @app.route('/api/fixtures/<date_str>')
 def get_fixtures_by_date(date_str):
     """
-    Get fixtures for a specific date.
-    
+    Get fixtures for a specific date WITH scores and match status.
+
     GET /api/fixtures/2026-02-15
     """
     from datetime import datetime as dt
     try:
-        # Validate date format
         dt.strptime(date_str, '%Y-%m-%d')
     except ValueError:
         return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
-    
+
     try:
-        fixtures = fetch_fixtures_by_date(date_str)
+        # Use proxy which includes scores, match_status, ht scores
+        result = sm_proxy.get_fixtures(date_str)
         return jsonify({
             'date': date_str,
-            'fixtures': fixtures,
-            'count': len(fixtures)
+            'fixtures': result.get('fixtures', []),
+            'count': result.get('count', 0),
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
