@@ -255,9 +255,6 @@ def get_daily_picks(date_str):
         result = generate_and_store(
             fixtures, predictor, stats_calculator, sm_stats,
             sm_proxy=sm_proxy,
-            num_matches=10,  # Always generate 10 for storage
-            min_odds=1.10,
-            max_odds=1.30,
             date_str=date_str,
         )
         
@@ -509,9 +506,6 @@ def free_picks_by_date(date_str):
                 generate_and_store(
                     fixtures, predictor, stats_calculator, sm_stats,
                     sm_proxy=sm_proxy,
-                    num_matches=10,
-                    min_odds=1.10,
-                    max_odds=1.30,
                     date_str=date_str,
                 )
                 doc = db.collection('daily_predictions').document(date_str).get()
@@ -837,9 +831,6 @@ def regenerate_picks():
                 result = generate_and_store(
                     fixtures, predictor, stats_calculator, sm_stats,
                     sm_proxy=sm_proxy,
-                    num_matches=10,
-                    min_odds=1.10,
-                    max_odds=1.30,
                     date_str=date_str,
                 )
                 results['free'] = result.get('status', 'unknown')
