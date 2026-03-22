@@ -5,8 +5,7 @@ Strategy:
   - Pick exactly 2 of the SUREST bets each day (was 3 in accumulator)
   - 2 picks at ~75% each = ~56% daily win rate (vs 34% with 3 picks)
   - Only the safest, highest-probability markets are allowed:
-      Over 1.5 Goals, Double Chance (1X), Double Chance (X2)
-  - Over 2.5 Goals removed — too risky for rollover safety
+      Over 1.5 Goals, Over 2.5 Goals, Double Chance (1X), Double Chance (X2)
   - No risky markets: no BTTS, no Away Win, no Draw, no half-time bets
   - Searches ALL leagues (no league filter) so dominant-team vs weak-team
     fixtures in ANY league can be included (e.g. PSG vs small club → Over 1.5)
@@ -20,9 +19,10 @@ from firebase_config import get_firestore_client
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 
 
-# Only the SAFEST markets allowed in Rollover — removed Over 2.5 (too risky)
+# Only the SAFEST markets allowed in Rollover
 ROLLOVER_ALLOWED_MARKETS = {
     'Over 1.5 Goals',
+    'Over 2.5 Goals',
     'Double Chance (1X)',
     'Double Chance (X2)',
 }
@@ -30,6 +30,7 @@ ROLLOVER_ALLOWED_MARKETS = {
 # Minimum AI probability required per market — raised for higher win rate
 ROLLOVER_MIN_PROB = {
     'Over 1.5 Goals':     0.78,
+    'Over 2.5 Goals':     0.78,
     'Double Chance (1X)': 0.80,
     'Double Chance (X2)': 0.78,
 }
@@ -37,6 +38,7 @@ ROLLOVER_MIN_PROB = {
 # Minimum composite score per market (edge + prob + stability blend)
 ROLLOVER_MIN_COMPOSITE = {
     'Over 1.5 Goals':     0.50,
+    'Over 2.5 Goals':     0.50,
     'Double Chance (1X)': 0.52,
     'Double Chance (X2)': 0.50,
 }
