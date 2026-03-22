@@ -92,13 +92,12 @@ def generate_and_store(
         }
 
     # ── Enforce combined odds ranges per tab ──────────────────────────────
-    # AI Pro = first 4 picks → combined 1.40–1.80 (safe: ~50-65% daily win rate)
-    # Free   = next 6 picks  → combined 1.40–1.80
-    # Previous 1.90-2.20 for AI Pro was too risky (~30% daily win rate).
-    ai_pro = matches[:4]
-    free   = matches[4:10]
+    # AI Pro = first 3 picks → combined 1.70–2.20, single pick 1.10–1.30
+    # Free   = next 7 picks  → combined 1.40–1.80
+    ai_pro = matches[:3]
+    free   = matches[3:10]
 
-    ai_pro = _enforce_combined_odds(ai_pro, min_combined=1.40, max_combined=1.80, all_pool=matches)
+    ai_pro = _enforce_combined_odds(ai_pro, min_combined=1.70, max_combined=2.20, all_pool=matches, max_count=3)
     free   = _enforce_combined_odds(free, min_combined=1.40, max_combined=1.80, all_pool=matches, exclude=ai_pro)
 
     matches = ai_pro + free
@@ -207,11 +206,12 @@ def _calc_combined(matches):
     return odds
 
 
-def _enforce_combined_odds(picks, *, min_combined, max_combined, all_pool, exclude=None):
+def _enforce_combined_odds(picks, *, min_combined, max_combined, all_pool, exclude=None, max_count=None):
     """
     Enforce combined odds within [min_combined, max_combined].
     - If too high: drop the highest-odds pick.
-    - If too low: add picks from all_pool that aren't already used.
+    - If too low and max_count allows: add picks from all_pool that aren't already used.
+    - max_count: hard cap on number of picks (won't add beyond this).
     """
     result = list(picks)
     exclude_keys = set()
@@ -223,21 +223,26 @@ def _enforce_combined_odds(picks, *, min_combined, max_combined, all_pool, exclu
         result.sort(key=lambda m: float(m.get('odds', 1.0)), reverse=True)
         result.pop(0)
 
-    # Floor: add picks from pool if combined < min
+    # Floor: add picks from pool if combined < min (respecting max_count)
     if _calc_combined(result) < min_combined:
-        used_keys = {f"{m.get('home_team')}_{m.get('away_team')}" for m in result}
-        used_keys.update(exclude_keys)
-        extras = [
-            m for m in all_pool
-            if f"{m.get('home_team')}_{m.get('away_team')}" not in used_keys
-        ]
-        for extra in extras:
-            test = result + [extra]
-            combined = _calc_combined(test)
-            if combined <= max_combined:
-                result = test
-                used_keys.add(f"{extra.get('home_team')}_{extra.get('away_team')}")
-                if combined >= min_combined:
+        if max_count is not None and len(result) >= max_count:
+            pass  # Already at max count, don't add more picks
+        else:
+            used_keys = {f"{m.get('home_team')}_{m.get('away_team')}" for m in result}
+            used_keys.update(exclude_keys)
+            extras = [
+                m for m in all_pool
+                if f"{m.get('home_team')}_{m.get('away_team')}" not in used_keys
+            ]
+            for extra in extras:
+                if max_count is not None and len(result) >= max_count:
                     break
+                test = result + [extra]
+                combined = _calc_combined(test)
+                if combined <= max_combined:
+                    result = test
+                    used_keys.add(f"{extra.get('home_team')}_{extra.get('away_team')}")
+                    if combined >= min_combined:
+                        break
 
     return result
