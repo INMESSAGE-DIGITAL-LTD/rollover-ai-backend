@@ -137,30 +137,31 @@ def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h, 
 
     edge = adjusted_prob - implied_prob
 
-    # Edge gate: calibrated thresholds per market risk level
+    # Edge gate: raised thresholds to overcome bookmaker vig (~5-8%)
+    # Without stats we require even MORE edge since we're less certain.
     lab = market_label.lower()
     if 'double chance' in lab or 'home or' in lab or 'draw or' in lab:
-        min_edge = 0.02 if has_stats else 0.01
-    elif 'home over 0.5' in lab or 'away over 0.5' in lab:
-        min_edge = 0.04 if has_stats else 0.03  # Higher bar for team-specific threshold markets
-    elif 'over 0.5' in lab:
-        min_edge = 0.02 if has_stats else 0.01
-    elif 'under 3.5' in lab or 'under 4.5' in lab:
-        min_edge = 0.02 if has_stats else 0.01  # Lower bar — safe wide-target markets
-    elif 'over 1.5' in lab:
-        min_edge = 0.03 if has_stats else 0.02
-    elif 'over 2.5' in lab:
-        min_edge = 0.04 if has_stats else 0.03  # Higher bar for riskier market
-    elif 'btts' in lab or 'both teams' in lab:
         min_edge = 0.04 if has_stats else 0.03
+    elif 'home over 0.5' in lab or 'away over 0.5' in lab:
+        min_edge = 0.05 if has_stats else 0.04
+    elif 'over 0.5' in lab:
+        min_edge = 0.04 if has_stats else 0.03
+    elif 'under 3.5' in lab or 'under 4.5' in lab:
+        min_edge = 0.04 if has_stats else 0.03
+    elif 'over 1.5' in lab:
+        min_edge = 0.05 if has_stats else 0.04
+    elif 'over 2.5' in lab:
+        min_edge = 0.06 if has_stats else 0.05
+    elif 'btts' in lab or 'both teams' in lab:
+        min_edge = 0.06 if has_stats else 0.05
     elif lab in ('home win', 'away win'):
-        min_edge = 0.05 if has_stats else 0.04  # Result markets need higher edge
+        min_edge = 0.07 if has_stats else 0.06  # Result markets need highest edge
     elif lab == 'draw':
-        min_edge = 0.05 if has_stats else 0.04  # Draw is risky, needs strong edge
+        min_edge = 0.08 if has_stats else 0.07  # Draw is very risky
     elif 'under 0.5' in lab:
-        min_edge = 0.03 if has_stats else 0.02
+        min_edge = 0.05 if has_stats else 0.04
     else:
-        min_edge = 0.03 if has_stats else 0.02
+        min_edge = 0.05 if has_stats else 0.04
 
     if edge < min_edge:
         return None
@@ -169,7 +170,8 @@ def qualify_and_score(market_label, odds, ai_prob, home_stats, away_stats, h2h, 
     stability = _compute_stability(market_label, home_stats, away_stats)
 
     # Composite score for risk governor sorting
-    composite = edge * 0.40 + adjusted_prob * 0.35 + stability * 0.25
+    # Stability (stats-derived) weighted highest — trust real data over model
+    composite = edge * 0.30 + adjusted_prob * 0.30 + stability * 0.40
 
     return {
         'edge': edge,
@@ -244,8 +246,8 @@ def _qualify_over25(ai_prob, implied, home, away, h2h):
         h2h_rate = h2h['over25_count'] / h2h['total_matches']
         stats_prob = stats_prob * 0.75 + h2h_rate * 0.25
 
-    # Blend AI model + stats (trust AI more)
-    blended = ai_prob * 0.55 + stats_prob * 0.30 + implied * 0.15
+    # Blend: trust stats MORE than AI model
+    blended = ai_prob * 0.35 + stats_prob * 0.45 + implied * 0.20
     return min(0.93, max(blended, implied + 0.02))
 
 
@@ -262,8 +264,8 @@ def _qualify_over15(ai_prob, implied, home, away, h2h):
         h2h_o15 = h2h['over15_count'] / h2h['total_matches']
         stats_prob = stats_prob * 0.75 + h2h_o15 * 0.25
 
-    # Blend AI model + stats (trust AI more)
-    blended = ai_prob * 0.55 + stats_prob * 0.30 + implied * 0.15
+    # Blend: trust stats MORE than AI model
+    blended = ai_prob * 0.35 + stats_prob * 0.45 + implied * 0.20
     return min(0.95, max(blended, implied + 0.02))
 
 
@@ -283,6 +285,10 @@ def _qualify_team_goals(label, ai_prob, implied, home, away):
     Uses VENUE-SPECIFIC stats for team scoring markets so we don't inflate
     the probability of 'Home Over 0.5' using the away team's scoring rate.
     Also rejects when the opposing team has a strong clean sheet record.
+
+    KEY INSIGHT: For big teams at home (avg scored >= 1.5), Home Over 0.5
+    is almost certain — boost heavily. It's SAFER to pick Man City to score
+    than to pick their weak opponent to score against them.
     """
     if home is None or away is None:
         return max(ai_prob, implied + 0.03)
@@ -293,12 +299,19 @@ def _qualify_team_goals(label, ai_prob, implied, home, away):
     if 'home over 0.5' in lab or 'home to score' in lab:
         # Penalise if away team has a strong clean sheet record
         opp_cs = away.get('clean_sheet_rate', 0.25)
-        if opp_cs >= 0.40:
-            return implied * 0.97  # Strong visiting defense → reject
+        if opp_cs >= 0.45:
+            return implied * 0.97  # Very strong visiting defense → reject
         # Use home-venue scoring rate (how often they score at home)
         score_rate = home.get('scored_in_rate', 0.78)
         home_venue_avg = home.get('home_avg_scored', home['avg_goals_scored'])
-        blended = ai_prob * 0.55 + score_rate * 0.25 + implied * 0.20
+        # Big teams at home: strong boost — they almost always score
+        if home_venue_avg >= 1.8:
+            blended = ai_prob * 0.25 + score_rate * 0.50 + implied * 0.25
+            return min(0.95, max(blended, implied + 0.05))
+        if home_venue_avg >= 1.3:
+            blended = ai_prob * 0.30 + score_rate * 0.45 + implied * 0.25
+            return min(0.94, max(blended, implied + 0.04))
+        blended = ai_prob * 0.35 + score_rate * 0.40 + implied * 0.25
         if home_venue_avg < 1.0:  # Rarely score at home → dampen
             blended *= 0.97
         return min(0.93, max(blended, implied + 0.02))
@@ -307,19 +320,23 @@ def _qualify_team_goals(label, ai_prob, implied, home, away):
     if 'away over 0.5' in lab or 'away to score' in lab:
         # Penalise if home team has a strong clean sheet record at home
         opp_cs = home.get('clean_sheet_rate', 0.30)
-        if opp_cs >= 0.40:
-            return implied * 0.97  # Strong home defense → reject
+        if opp_cs >= 0.45:
+            return implied * 0.97  # Very strong home defense → reject
         # Use away-venue scoring rate (how often they score away)
         score_rate = away.get('scored_in_rate', 0.70)
         away_venue_avg = away.get('away_avg_scored', away['avg_goals_scored'])
-        blended = ai_prob * 0.55 + score_rate * 0.25 + implied * 0.20
+        # Strong away scorers: boost
+        if away_venue_avg >= 1.5:
+            blended = ai_prob * 0.25 + score_rate * 0.50 + implied * 0.25
+            return min(0.94, max(blended, implied + 0.04))
+        blended = ai_prob * 0.35 + score_rate * 0.40 + implied * 0.25
         if away_venue_avg < 0.8:  # Rarely score away → dampen more
             blended *= 0.96
         return min(0.93, max(blended, implied + 0.02))
 
     # 1st / 2nd half over 0.5 — both teams contribute, use average
     score_rate = (home['scored_in_rate'] + away['scored_in_rate']) / 2.0
-    blended = ai_prob * 0.55 + score_rate * 0.25 + implied * 0.20
+    blended = ai_prob * 0.35 + score_rate * 0.40 + implied * 0.25
     return min(0.93, max(blended, implied + 0.02))
 
 
@@ -329,13 +346,12 @@ def _qualify_under(ai_prob, implied, home, away):
         return max(ai_prob, implied + 0.03)
 
     combined = home['avg_goals_scored'] + away['avg_goals_scored']
-    # Under 4.5 is very likely if combined avg < 3.5
-    # Under 3.5 is likely if combined avg < 2.8
     defense_factor = 1.0 - min(1.0, combined / 5.0)
     clean_factor = (home.get('clean_sheet_rate', 0.3) + away.get('clean_sheet_rate', 0.3)) / 2.0
 
     stats_prob = defense_factor * 0.40 + clean_factor * 0.20 + 0.30
-    blended = ai_prob * 0.45 + stats_prob * 0.30 + implied * 0.25
+    # Trust stats more for under markets — defensive patterns are stable
+    blended = ai_prob * 0.30 + stats_prob * 0.45 + implied * 0.25
     return min(0.95, max(blended, implied + 0.02))
 
 
@@ -364,8 +380,8 @@ def _qualify_under_tight(ai_prob, implied, home, away, h2h):
         # Blend H2H rate prominently (40%)
         stats_prob = stats_prob * 0.60 + h2h_under25_rate * 0.40
 
-    # Trust AI model less here (it was not trained on Under 2.5 explicitly)
-    blended = ai_prob * 0.40 + stats_prob * 0.35 + implied * 0.25
+    # Trust stats heavily — AI model has no dedicated Under 2.5 model
+    blended = ai_prob * 0.25 + stats_prob * 0.50 + implied * 0.25
     return min(0.92, max(blended, implied + 0.02))
 
 
@@ -378,7 +394,8 @@ def _qualify_home_win(ai_prob, implied, home, away, h2h):
     if h2h and h2h['total_matches'] >= 3 and h2h['team1_wins'] > h2h['team2_wins']:
         stats_prob += 0.05
 
-    blended = ai_prob * 0.50 + stats_prob * 0.30 + implied * 0.20
+    # Trust stats more than AI for result markets
+    blended = ai_prob * 0.35 + stats_prob * 0.40 + implied * 0.25
     return min(0.93, max(blended, implied + 0.02))
 
 
@@ -395,7 +412,8 @@ def _qualify_away_win(ai_prob, implied, home, away, h2h):
     if h2h and h2h['total_matches'] >= 3 and h2h['team2_wins'] >= h2h['team1_wins']:
         stats_prob += 0.05
 
-    blended = ai_prob * 0.50 + stats_prob * 0.30 + implied * 0.20
+    # Trust stats more than AI for result markets
+    blended = ai_prob * 0.35 + stats_prob * 0.40 + implied * 0.25
     return min(0.90, max(blended, implied + 0.02))
 
 
@@ -411,7 +429,8 @@ def _qualify_btts(ai_prob, implied, home, away, h2h):
         h2h_btts = h2h['btts_count'] / h2h['total_matches']
         stats_prob = stats_prob * 0.75 + h2h_btts * 0.25
 
-    blended = ai_prob * 0.50 + stats_prob * 0.30 + implied * 0.20
+    # Trust stats more
+    blended = ai_prob * 0.35 + stats_prob * 0.40 + implied * 0.25
     return min(0.92, max(blended, implied + 0.02))
 
 

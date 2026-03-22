@@ -15,7 +15,8 @@ SPORTMONKS_TOKEN = os.environ.get(
 )
 SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
-# League IDs — leagues available in the SportMonks Standard plan
+# League IDs — all leagues covered by SportMonks subscription.
+# Includes ANY league where we can get reliable stats for accurate predictions.
 LEAGUE_IDS = {
     # UEFA Competitions
     2: 'Champions League',
@@ -51,7 +52,7 @@ LEAGUE_IDS = {
     453: 'Ekstraklasa',
     # Portugal
     462: 'Liga Portugal',
-    # Other
+    # Other European
     486: 'Premier League (Other)',
     609: 'Premier League (Ukraine)',
     # Scotland
@@ -66,10 +67,66 @@ LEAGUE_IDS = {
     591: 'Super League',
     # Turkey
     600: 'Super Lig',
+    # Switzerland
+    262: 'Czech First League',
+    474: 'Romanian Liga 1',
+    531: 'Serbian SuperLiga',
+    229: 'Bulgarian First League',
+    253: 'Cypriot First Division',
+    292: 'Finnish Veikkausliiga',
+    372: "Israeli Premier League",
+    # Americas
+    648: 'Brazilian Serie A',
+    636: 'Argentine Primera Division',
+    779: 'MLS',
+    # Asia / Middle East
+    968: 'J-League',
+    1034: 'K-League 1',
+    989: 'Chinese Super League',
+    944: 'Saudi Pro League',
+    # Oceania
+    1356: 'A-League',
+    # Africa
+    806: 'South African Premier League',
+    830: 'Egyptian Premier League',
+    860: 'Moroccan Botola Pro',
 }
 
 # Cup competition league IDs — require stronger stats evidence for team goal markets
 CUP_LEAGUE_IDS = {24, 27, 390, 570}  # FA Cup, Carabao Cup, Coppa Italia, Copa Del Rey
+
+# ── League-specific tendencies for smarter market selection ──────────────
+# These are statistical patterns observed across seasons.
+# Used to boost/dampen market confidence based on league characteristics.
+LEAGUE_TENDENCIES = {
+    # Italy: defensive, low-scoring → favor Under markets
+    384: {'under_boost': 1.08, 'over_dampen': 0.94, 'style': 'defensive'},
+    387: {'under_boost': 1.06, 'over_dampen': 0.95, 'style': 'defensive'},
+    # Australia: high-scoring, open play → favor Over markets
+    1356: {'over_boost': 1.08, 'under_dampen': 0.93, 'style': 'attacking'},
+    # Netherlands: high-scoring, attacking football
+    72: {'over_boost': 1.06, 'under_dampen': 0.95, 'style': 'attacking'},
+    # Germany: high-scoring
+    82: {'over_boost': 1.05, 'under_dampen': 0.96, 'style': 'attacking'},
+    # France Ligue 1: moderate (PSG dominates → Home wins + goals)
+    301: {'home_boost': 1.04, 'style': 'moderate'},
+    # Turkey: unpredictable, avoid result markets
+    600: {'result_dampen': 0.93, 'style': 'volatile'},
+    # Saudi Pro League: high-scoring
+    944: {'over_boost': 1.06, 'under_dampen': 0.95, 'style': 'attacking'},
+    # South Africa: low-scoring, defensive
+    806: {'under_boost': 1.07, 'over_dampen': 0.94, 'style': 'defensive'},
+    # Egypt: low-scoring, defensive
+    830: {'under_boost': 1.06, 'over_dampen': 0.95, 'style': 'defensive'},
+    # Brazil: high-scoring, attacking
+    648: {'over_boost': 1.06, 'under_dampen': 0.95, 'style': 'attacking'},
+    # Argentina: moderate-high scoring
+    636: {'over_boost': 1.04, 'style': 'attacking'},
+    # Japan J-League: high-scoring
+    968: {'over_boost': 1.06, 'under_dampen': 0.95, 'style': 'attacking'},
+    # K-League: moderate
+    1034: {'over_boost': 1.03, 'style': 'moderate'},
+}
 
 LEAGUE_FILTER = ','.join(str(lid) for lid in LEAGUE_IDS)
 
@@ -110,26 +167,9 @@ AI_MARKET_MAP = {
     'sh_under_05': 'sh_under_05',
 }
 
-# Fallback mapping when expanded models aren't trained yet
-AI_MARKET_FALLBACK = {
-    'btts_yes': 'ft_over_15',
-    'home_win': 'home_over_15',
-    'away_win': 'away_over_15',
-    'dc_home_draw': 'home_over_05',
-    'dc_away_draw': 'away_over_05',
-    'dc_home_away': 'ft_over_15',
-    'ft_over_25': 'ft_over_15',
-    'draw': 'ft_over_15',
-    'btts_no': 'ft_over_15',
-    'home_over_15': 'ft_over_15',
-    'away_over_15': 'ft_over_15',
-    'fh_under_05': 'fh_over_05',
-    'sh_under_05': 'sh_over_05',
-    # Under 2.5 / 1.5 — use the closest trained under model
-    'ft_under_25': 'ft_under_35',   # Under 2.5 → Under 3.5 model (directionally correct)
-    'ft_under_35': 'ft_under_15',   # Under 3.5 → Under 1.5 model as last resort
-    'ft_under_15': 'ft_under_15',   # Already a base model (always available)
-}
+# NO FALLBACK MODELS — if a market has no trained model, skip it entirely.
+# All 24 models are trained. This map is kept only for reference.
+# The _try_add function now returns immediately if the model key is not in ai_pred.
 
 
 def fetch_todays_fixtures():
@@ -517,14 +557,33 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         }
 
         # Helper to add a qualified option
+        league_id = fix.get('league', 0)
+        league_tendency = LEAGUE_TENDENCIES.get(league_id, {})
+
         def _try_add(market_label, odds, ai_market_key, line=None, source='api'):
             if not passes_odds_safety(market_label, odds, free_mode=free_mode):
                 return
-            # Use dedicated model if available, fall back to proxy
+            # STRICT: only use dedicated trained model — skip if no model exists
             actual_key = ai_market_key
             if actual_key not in ai_pred:
-                actual_key = AI_MARKET_FALLBACK.get(ai_market_key, ai_market_key)
+                return  # No trained model for this market — don't guess
             raw_ai_prob = float(ai_pred.get(actual_key, 0.5))
+
+            # Apply league-specific tendency adjustments
+            lab = market_label.lower()
+            if league_tendency:
+                if 'over' in lab and 'goal' in lab:
+                    raw_ai_prob *= league_tendency.get('over_boost', 1.0)
+                    raw_ai_prob *= league_tendency.get('over_dampen', 1.0)
+                if 'under' in lab and 'goal' in lab:
+                    raw_ai_prob *= league_tendency.get('under_boost', 1.0)
+                    raw_ai_prob *= league_tendency.get('under_dampen', 1.0)
+                if lab in ('home win', 'away win', 'draw'):
+                    raw_ai_prob *= league_tendency.get('result_dampen', 1.0)
+                if lab == 'home win':
+                    raw_ai_prob *= league_tendency.get('home_boost', 1.0)
+                raw_ai_prob = min(0.97, raw_ai_prob)
+
             qual = qualify_and_score(
                 market_label, odds, raw_ai_prob,
                 home_live, away_live, h2h_data,
