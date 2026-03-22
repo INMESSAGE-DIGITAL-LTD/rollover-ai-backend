@@ -2,15 +2,17 @@
 Rollover-specific prediction generator — Safety First.
 
 Strategy:
+  - Pick exactly 2 of the SUREST bets each day (was 3 in accumulator)
+  - 2 picks at ~75% each = ~56% daily win rate (vs 34% with 3 picks)
   - Only the safest, highest-probability markets are allowed:
-      Over 1.5 Goals, Over 2.5 Goals, Double Chance (1X), Double Chance (X2)
+      Over 1.5 Goals, Double Chance (1X), Double Chance (X2)
+  - Over 2.5 Goals removed — too risky for rollover safety
   - No risky markets: no BTTS, no Away Win, no Draw, no half-time bets
   - Searches ALL leagues (no league filter) so dominant-team vs weak-team
     fixtures in ANY league can be included (e.g. PSG vs small club → Over 1.5)
-  - DYNAMIC pick count: only include picks that truly qualify (1-3 max)
-  - Strict probability gates per market
+  - Strict probability gates: minimum 75% AI probability
   - Market penalties applied to avoid repeating losing patterns
-  - Combined odds capped at 2.50 to keep daily slip safe
+  - Combined odds capped at 2.00 to keep daily slip safe
   - Stores results in Firestore daily_rollover/{date_str} (separate from AI Pro)
 """
 from datetime import datetime, timedelta
@@ -18,44 +20,38 @@ from firebase_config import get_firestore_client
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 
 
-# Only these markets are allowed in Rollover — the safest available
+# Only the SAFEST markets allowed in Rollover — removed Over 2.5 (too risky)
 ROLLOVER_ALLOWED_MARKETS = {
     'Over 1.5 Goals',
-    'Over 2.5 Goals',
     'Double Chance (1X)',
     'Double Chance (X2)',
 }
 
-# Minimum AI probability required per market for Rollover inclusion
-# The restricted market set already ensures safety — thresholds don't need
-# to be stricter than AI Pro since we exclude Home/Away Win entirely
+# Minimum AI probability required per market — raised for higher win rate
 ROLLOVER_MIN_PROB = {
-    'Over 1.5 Goals':     0.70,
-    'Over 2.5 Goals':     0.65,
-    'Double Chance (1X)': 0.72,
-    'Double Chance (X2)': 0.70,
+    'Over 1.5 Goals':     0.78,
+    'Double Chance (1X)': 0.80,
+    'Double Chance (X2)': 0.78,
 }
 
 # Minimum composite score per market (edge + prob + stability blend)
 ROLLOVER_MIN_COMPOSITE = {
-    'Over 1.5 Goals':     0.45,
-    'Over 2.5 Goals':     0.43,
-    'Double Chance (1X)': 0.46,
-    'Double Chance (X2)': 0.45,
+    'Over 1.5 Goals':     0.50,
+    'Double Chance (1X)': 0.52,
+    'Double Chance (X2)': 0.50,
 }
 
 # Minimum edge required for rollover picks (model_prob - implied_prob)
-# Lower than AI Pro because restricted markets are inherently safer
-ROLLOVER_MIN_EDGE = 0.03
+ROLLOVER_MIN_EDGE = 0.04
 
-# Max single-pick odds for Rollover
-ROLLOVER_MAX_SINGLE_ODDS = 1.55
+# Max single-pick odds for Rollover — lower = safer
+ROLLOVER_MAX_SINGLE_ODDS = 1.45
 
-# Max combined odds for the entire slip
-ROLLOVER_MAX_COMBINED_ODDS = 2.50
+# Max combined odds for the entire slip (2 picks)
+ROLLOVER_MAX_COMBINED_ODDS = 2.00
 
-# Max picks per slip — 1-3 dynamic based on quality
-ROLLOVER_MAX_PICKS = 3
+# Exactly 2 picks — the 2 surest bets
+ROLLOVER_MAX_PICKS = 2
 
 # Max 1 pick of the same market type in one slip (force diversity)
 ROLLOVER_MAX_SAME_MARKET = 1
@@ -75,14 +71,10 @@ def generate_rollover_picks(
     """
     Generate safety-first rollover picks from fixtures.
 
-    Uses the same fixture pipeline as the main generator but applies strict
-    market filtering, higher probability thresholds, edge requirements, and
-    market penalties, then stores results in the separate daily_rollover
-    Firestore collection.
-
-    DYNAMIC PICK COUNT: Returns only picks that truly qualify (1 to ROLLOVER_MAX_PICKS).
-    If no picks meet the strict safety standards, returns 0 picks rather than
-    lowering the bar.
+    Picks the 2 SUREST bets from all available fixtures. Uses the same
+    fixture pipeline as the main generator but applies strict market
+    filtering, higher probability thresholds (75%+), edge requirements,
+    and market penalties.
 
     Args:
         fixtures:          List of fixture dicts from SportMonks (all leagues).
@@ -124,10 +116,10 @@ def generate_rollover_picks(
     safe_options = [
         o for o in all_options
         if o['market'] in ROLLOVER_ALLOWED_MARKETS
-        and o['ai_prob'] >= ROLLOVER_MIN_PROB.get(o['market'], 0.70)
-        and o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.45)
+        and o['ai_prob'] >= ROLLOVER_MIN_PROB.get(o['market'], 0.78)
+        and o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.50)
         and o.get('edge', 0) >= ROLLOVER_MIN_EDGE
-        and o['odds'] >= 1.10
+        and o['odds'] >= 1.05
         and o['odds'] <= ROLLOVER_MAX_SINGLE_ODDS
     ]
 
@@ -138,10 +130,9 @@ def generate_rollover_picks(
             if mkt in market_penalties:
                 penalty = market_penalties[mkt]
                 opt['composite_score'] *= penalty
-                # Re-check composite threshold after penalty
         safe_options = [
             o for o in safe_options
-            if o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.45)
+            if o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.50)
         ]
 
     print(f"🛡️ Rollover Generator: {len(safe_options)} safe options after filtering")
@@ -157,8 +148,7 @@ def generate_rollover_picks(
     # Sort by composite_score descending (most confident first)
     safe_options.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
 
-    # ── Select slip: one pick per match, max max_picks, market diversity ──────
-    # DYNAMIC: Only include picks that qualify. Could be 1, 2, or 3.
+    # ── Select the 2 surest bets: one pick per match, market diversity ────────
     slip_matches = []
     combined_odds = 1.0
     used_matches = set()
@@ -193,9 +183,7 @@ def generate_rollover_picks(
             'message': 'Could not build rollover slip from available picks.',
         }
 
-    # ── Enforce combined odds 1.40–2.50 ──────────────────────────────────────
-    ROLLOVER_MIN_COMBINED = 1.40
-
+    # ── Enforce combined odds cap ─────────────────────────────────────────────
     # Cap: remove highest-odds pick until combined ≤ max
     while len(slip_matches) > 1:
         combined_odds = 1.0
@@ -210,21 +198,6 @@ def generate_rollover_picks(
     combined_odds = 1.0
     for o in slip_matches:
         combined_odds *= o['odds']
-
-    # Floor: if combined < min, try adding more safe options
-    if combined_odds < ROLLOVER_MIN_COMBINED:
-        used_matches_final = {f"{o['home_team']}_{o['away_team']}" for o in slip_matches}
-        for opt in safe_options:
-            match_key = f"{opt['home_team']}_{opt['away_team']}"
-            if match_key in used_matches_final:
-                continue
-            test_combined = combined_odds * opt['odds']
-            if test_combined <= ROLLOVER_MAX_COMBINED_ODDS:
-                slip_matches.append(opt)
-                combined_odds = test_combined
-                used_matches_final.add(match_key)
-                if combined_odds >= ROLLOVER_MIN_COMBINED:
-                    break
 
     formatted = format_slip_matches(slip_matches)
     conf = slip_confidence(slip_matches)
