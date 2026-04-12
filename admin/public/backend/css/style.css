@@ -1,0 +1,198 @@
+.img-lg {
+    width: 92px !important;
+    height: 92px !important;
+  }
+  
+  .img-sm {
+    width: 43px !important;
+    height: 43px !important;
+  }
+  
+  .img-xs {
+    width: 37px !important;
+    height: 37px !important;
+  }
+  
+  .img-ss {
+    width: 26px !important;
+    height: 26px !important;
+  }
+
+  .dataTables_paginate a {
+    text-decoration: none;
+}
+
+.select2-container {
+    width: 100% !important;
+}
+
+.select2-container .select2-selection--single {
+    height: calc(2.25rem + 8px);
+}
+
+.select2-container--default .select2-selection--single {
+    border: 1px solid #ebedf2;
+    border-radius: 0.25rem;
+}
+
+.select2-container--default .select2-selection--single .select2-selection__rendered {
+    line-height: 40px;
+}
+
+.select2-selection__arrow {
+    top: 8px !important;
+}
+
+.modal .dropify-wrapper {
+    height: 150px;
+}
+
+/* .dropify-wrapper .dropify-message p {
+    display: none;
+} */
+
+.required {
+    color: red;
+}
+
+.error {
+    border: 1px solid #e74c3c !important;
+    background-position: center bottom, center calc(100% - 0px) !important;
+}
+
+select.error+span {
+    border: 1px solid #e74c3c !important;
+    border-radius: .25rem;
+}
+
+checkbox.error+span {
+    border: 1px solid #e74c3c !important;
+    border-radius: 4px;
+}
+
+.ajax-submit label.error {
+    display: none !important;
+}
+
+label.error {
+    color: #B94A48;
+    margin-top: 2px;
+}
+
+.jq-toast-wrap .jq-icon-success {
+    background-color: #1bcfb4;
+}
+
+.jq-icon-success>.jq-toast-loader {
+    transition: width 1.0s ease-in !important;
+    background: #f96868 !important;
+}
+
+.jq-toast-wrap .jq-icon-error {
+    background-color: #fe7c96;
+}
+
+.jq-icon-error>.jq-toast-loader {
+    transition: width 1.0s ease-in !important;
+    background: #f2a654 !important;
+}
+
+.params-card {
+    border: 1px solid transparent;
+    border-color: #ebedf2 #ebedf2 #ebedf2;
+    overflow: hidden;
+    padding: 15px;
+    border-radius: 4px;
+}
+
+.logo-header .logo{
+    height: 65px;
+}
+
+.logo-header .logo .navbar-brand{
+    height: 100%;
+}
+
+#main_modal .modal-body{
+    padding: 20px 30px 30px 30px;
+}
+
+.pace {
+    -webkit-pointer-events: none;
+    pointer-events: none;
+  
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    user-select: none;
+  }
+  .pace-inactive {
+    display: none;
+  }
+  .pace .pace-progress {
+    background: #2a68b9;
+    position: fixed;
+    z-index: 2000;
+    top: 0;
+    right: 100%;
+    width: 100%;
+    height: 4px;
+  }
+
+  #preloader {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 1999;
+    height: 100%;
+    width: 100%;
+    background: rgba(0,0,0,.5);
+    display: flex;
+}
+.loader{
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    border: 10px solid #f3f3f3;
+    border-radius: 50%;
+    border-top: 10px solid #1761fd;
+    width: 80px;
+    height: 80px;
+    -webkit-animation: spin 2s linear infinite;
+    animation: spin 2s linear infinite;
+}
+
+@-webkit-keyframes spin {
+  0% { -webkit-transform: rotate(0deg); }
+  100% { -webkit-transform: rotate(360deg); }
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.u-sidebar-nav-menu--second-level .u-sidebar-nav-menu__item{
+    margin-bottom: 3px !important;
+}
+.page-title{
+    color: #2a68b9;
+    font-size: 16px;
+    font-weight: bold;
+}
+.card-title .btn {
+    margin-top: 10px;
+}
+
+.u-sidebar-nav-menu__link.active, .u-sidebar-nav-menu--top-level > .u-sidebar-nav--opened > .u-sidebar-nav-menu__link, .page-item.active .page-link, .btn-primary, .btn-primary:hover, .btn-primary:not(:disabled):not(.disabled):active, .btn-primary:not(:disabled):not(.disabled).active, .show > .btn-primary.dropdown-toggle{
+    background-color: #2a68b9;
+    border-color: #2a68b9;
+}
+
+.page-title, .breadcrumb-item.active a, .u-sidebar-nav-menu__link:hover .u-sidebar-nav-menu__item-icon, .link-dark:hover{
+    color: #2a68b9 !important;
+}
+
+.u-sidebar-nav-menu__link:hover{
+    background-color: rgba(0, 122, 92, 0.1);
+}

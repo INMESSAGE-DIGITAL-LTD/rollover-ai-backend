@@ -1,0 +1,1 @@
+{!! get_option('prediction_app_privacy_policy') !!}
