@@ -1,14 +1,14 @@
 """
 Flask API for AI Football Predictions — Hybrid Architecture
-SportMonks data → XGBoost AI → Statistical Qualification → Risk Governor
+API-Football data → XGBoost AI → Statistical Qualification → Risk Governor
 """
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from models.multi_market_predictor import MultiMarketPredictor
 from utils.team_stats import TeamStatsCalculator
-from utils.sportmonks_stats import fetch_team_stats, fetch_h2h, clear_cache
+from utils.apifootball_stats import ApiFootballStats, clear_cache
 from utils.fixture_fetcher import fetch_todays_fixtures, fetch_fixtures_by_date, build_parlay_slip
-from utils.sportmonks_proxy import SportMonksProxy
+from utils.apifootball_proxy import ApiFootballProxy
 from history import register_history_routes, init_history_db, save_daily_picks
 from firebase_config import get_firestore_client
 import os
@@ -16,8 +16,8 @@ import os
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter app
 
-# Initialize SportMonks proxy with caching + background polling
-sm_proxy = SportMonksProxy()
+# Initialize API-Football proxy with caching + background polling
+af_proxy = ApiFootballProxy()
 
 # Initialize pick history database (Firestore)
 init_history_db()
@@ -34,16 +34,9 @@ print("🔄 Loading team statistics (CSV fallback)...")
 stats_calculator = TeamStatsCalculator('data/raw/all_matches.csv')
 print("✅ Team stats ready!")
 
-# SportMonks live stats module (imported as functions, no init needed)
-class _SmStatsProxy:
-    """Thin wrapper so we can pass sm_stats as an object."""
-    def fetch_team_stats(self, team_id):
-        return fetch_team_stats(team_id)
-    def fetch_h2h(self, team1_id, team2_id):
-        return fetch_h2h(team1_id, team2_id)
-
-sm_stats = _SmStatsProxy()
-print("✅ SportMonks live stats module ready!")
+# API-Football live stats module
+af_stats = ApiFootballStats()
+print("✅ API-Football live stats module ready!")
 
 @app.route('/')
 def home():
@@ -52,7 +45,7 @@ def home():
         "version": "2.2.0",
         "status": "running",
         "models_loaded": len(predictor.models),
-        "engine": "hybrid (SportMonks + XGBoost + Statistical Qualification)",
+        "engine": "hybrid (API-Football + XGBoost + Statistical Qualification)",
     })
 
 @app.route('/health')
@@ -280,7 +273,7 @@ def picks_by_date(date_str):
         from utils.market_tracker import get_market_penalties
         _mp = {}
         try:
-            _mp = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
+            _mp = get_market_penalties(af_proxy, lookback_days=7, min_picks=3)
         except Exception:
             pass
 
@@ -290,7 +283,7 @@ def picks_by_date(date_str):
             num_matches=10,  # Always generate 10 for storage
             min_odds=1.10,
             max_odds=1.30,
-            sm_stats=sm_stats,
+            af_stats=af_stats,
             free_mode=False,
             market_penalties=_mp,
         )
@@ -378,13 +371,13 @@ def rollover_picks_by_date(date_str):
         from utils.market_tracker import get_market_penalties as _get_mp
         _rollover_mp = {}
         try:
-            _rollover_mp = _get_mp(sm_proxy, lookback_days=7, min_picks=3)
+            _rollover_mp = _get_mp(af_proxy, lookback_days=7, min_picks=3)
         except Exception:
             pass
 
         result = generate_rollover_picks(
-            fixtures, predictor, stats_calculator, sm_stats,
-            sm_proxy=sm_proxy,
+            fixtures, predictor, stats_calculator, af_stats,
+            af_proxy=af_proxy,
             date_str=date_str,
             market_penalties=_rollover_mp,
         )
@@ -478,13 +471,13 @@ def ai_pro_picks_by_date(date_str):
         from utils.market_tracker import get_market_penalties as _get_ai_pro_mp
         _ai_pro_mp = {}
         try:
-            _ai_pro_mp = _get_ai_pro_mp(sm_proxy, lookback_days=7, min_picks=3)
+            _ai_pro_mp = _get_ai_pro_mp(af_proxy, lookback_days=7, min_picks=3)
         except Exception:
             pass
 
         result = generate_ai_pro_picks(
-            fixtures, predictor, stats_calculator, sm_stats,
-            sm_proxy=sm_proxy,
+            fixtures, predictor, stats_calculator, af_stats,
+            af_proxy=af_proxy,
             date_str=date_str,
             market_penalties=_ai_pro_mp,
         )
@@ -535,7 +528,7 @@ def free_picks_by_date(date_str):
 
     try:
         cache_key = f"free_picks_v5_{date_str}"
-        cached = sm_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
+        cached = af_proxy.get_cache(cache_key, ttl=3600)  # 1 hour
         if cached is not None:
             print(f"⚡ Serving cached /api/free-picks/{date_str}")
             return jsonify(cached)
@@ -560,7 +553,7 @@ def free_picks_by_date(date_str):
 
         # ── Step 1: Get AI Pro picks — exclude same game (allow same match if different market) ──
         pro_cache_key = f"picks_pro_{date_str}"
-        pro_cached = sm_proxy.get_cache(pro_cache_key, ttl=3600)
+        pro_cached = af_proxy.get_cache(pro_cache_key, ttl=3600)
         exclude_match_markets = set()
 
         if pro_cached:
@@ -581,7 +574,7 @@ def free_picks_by_date(date_str):
         from utils.market_tracker import get_market_penalties
         _free_mp = {}
         try:
-            _free_mp = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
+            _free_mp = get_market_penalties(af_proxy, lookback_days=7, min_picks=3)
         except Exception:
             pass
 
@@ -590,7 +583,7 @@ def free_picks_by_date(date_str):
             num_matches=6,
             min_odds=1.10,
             max_odds=1.30,
-            sm_stats=sm_stats,
+            af_stats=af_stats,
             free_mode=False,  # Use strict safety rules
             exclude_match_markets=exclude_match_markets,
             market_penalties=_free_mp,
@@ -625,7 +618,7 @@ def free_picks_by_date(date_str):
         for rank, (idx, _) in enumerate(sorted_by_safety):
             matches[idx]['is_free'] = rank >= 2  # Top 2 safest = LOCKED (is_free=false)
 
-        sm_proxy.set_cache(cache_key, result)
+        af_proxy.set_cache(cache_key, result)
         return jsonify(result)
 
     except Exception as e:
@@ -674,7 +667,7 @@ def parlay_predictions():
             num_matches=num_matches,
             min_odds=min_odds,
             max_odds=max_odds,
-            sm_stats=sm_stats,
+            af_stats=af_stats,
         )
 
         print(f"✅ Parlay: {result['slip']['match_count']} matches, "
@@ -692,16 +685,16 @@ def list_teams():
     teams = stats_calculator.get_all_teams()
     return jsonify({'teams': teams, 'count': len(teams)})
 
-# ── SportMonks Proxy Endpoints (cached, token stays server-side) ──
+# ── API-Football Proxy Endpoints (cached, key stays server-side) ──
 
 @app.route('/api/livescores', methods=['GET'])
 def livescores():
     """
-    Return cached live scores. Backend polls SportMonks every 2 min.
-    Clients call this instead of SportMonks directly.
+    Return cached live scores. Backend polls API-Football every 2 min.
+    Clients call this instead of API-Football directly.
     """
     try:
-        data = sm_proxy.get_livescores()
+        data = af_proxy.get_livescores()
         return jsonify(data)
     except Exception as e:
         print(f"❌ Error in /api/livescores: {e}")
@@ -711,10 +704,10 @@ def livescores():
 def fixtures_by_date(date_str):
     """
     Return cached fixtures for a date. 10-min cache TTL.
-    Clients call this instead of SportMonks directly.
+    Clients call this instead of API-Football directly.
     """
     try:
-        data = sm_proxy.get_fixtures(date_str)
+        data = af_proxy.get_fixtures(date_str)
         return jsonify(data)
     except Exception as e:
         print(f"❌ Error in /api/fixtures/{date_str}: {e}")
@@ -723,10 +716,10 @@ def fixtures_by_date(date_str):
 @app.route('/api/leagues', methods=['GET'])
 def leagues():
     """
-    Return cached leagues from SportMonks. 24-hour cache TTL.
+    Return cached leagues from API-Football. 24-hour cache TTL.
     """
     try:
-        data = sm_proxy.get_leagues()
+        data = af_proxy.get_leagues()
         return jsonify(data)
     except Exception as e:
         print(f"❌ Error in /api/leagues: {e}")
@@ -777,7 +770,7 @@ def update_results():
     try:
         from utils.result_updater import update_past_results
         days_back = (request.json or {}).get('days_back', 3)
-        summary = update_past_results(sm_proxy, days_back=days_back)
+        summary = update_past_results(af_proxy, days_back=days_back)
         return jsonify({'status': 'success', 'code_version': 'v5', **summary})
     except Exception as e:
         print(f"❌ update-results error: {e}")
@@ -808,8 +801,8 @@ def generate_daily():
             from services.generator import generate_and_store
             fixtures = fetch_todays_fixtures()
             result = generate_and_store(
-                fixtures, predictor, stats_calculator, sm_stats,
-                sm_proxy=sm_proxy,
+                fixtures, predictor, stats_calculator, af_stats,
+                af_proxy=af_proxy,
             )
             print(f"✅ Background generation done: {result.get('message', '')}")
         except Exception as e:

@@ -1,84 +1,95 @@
 """
-Fetch today's fixtures from SportMonks API and generate AI predictions + slip
-Supports mixed markets: Over/Under, 1X2, BTTS, Double Chance, Team Goals, Half Goals
+Fetch today's fixtures from API-Football (api-sports.io) and generate AI predictions + slip.
+Supports mixed markets: Over/Under, 1X2, BTTS, Double Chance, Team Goals, Half Goals.
 """
 import os
 import json
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
+
+APIFOOTBALL_KEY = os.environ.get('APIFOOTBALL_KEY', 'da7a6fc2f03e7fb7994995143d29358f')
+APIFOOTBALL_BASE = 'https://v3.football.api-sports.io'
 
 
-SPORTMONKS_TOKEN = os.environ.get(
-    'SPORTMONKS_TOKEN',
-    'b7EFSY6Bmrxisf6OswWjYArQUHMakSEDRMTJVoFiH56sbHsxaJxFRpVrOuoL',
-)
-SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
+def _get(path, params):
+    qs = '&'.join(f"{k}={v}" for k, v in params.items())
+    url = f"{APIFOOTBALL_BASE}/{path}?{qs}"
+    req = urllib.request.Request(url, headers={'x-apisports-key': APIFOOTBALL_KEY})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return json.loads(resp.read().decode())
 
-# League IDs — leagues available in the SportMonks Standard plan
+
+def get_current_season():
+    now = datetime.now()
+    return now.year if now.month >= 8 else now.year - 1
+
+
+# League IDs — API-Football IDs (entirely different from SportMonks numbering)
 LEAGUE_IDS = {
     # UEFA Competitions
     2: 'Champions League',
-    5: 'Europa League',
-    2286: 'Conference League',
-    1371: 'Europa League Play-offs',
+    3: 'Europa League',
+    848: 'Conference League',
     # England
-    8: 'Premier League',
-    9: 'Championship',
-    24: 'FA Cup',
-    27: 'Carabao Cup',
+    39: 'Premier League',
+    40: 'Championship',
+    45: 'FA Cup',
+    48: 'Carabao Cup',
     # Netherlands
-    72: 'Eredivisie',
+    88: 'Eredivisie',
     # Germany
-    82: 'Bundesliga',
+    78: 'Bundesliga',
+    79: 'Bundesliga 2',
     # Austria
-    181: 'Austrian Bundesliga',
+    218: 'Austrian Bundesliga',
     # Belgium
-    208: 'Pro League',
+    144: 'Pro League',
     # Croatia
-    244: '1. HNL',
+    210: '1. HNL',
     # Denmark
-    271: 'Superliga',
+    119: 'Superliga',
     # France
-    301: 'Ligue 1',
+    61: 'Ligue 1',
+    62: 'Ligue 2',
     # Italy
-    384: 'Serie A',
-    387: 'Serie B',
-    390: 'Coppa Italia',
+    135: 'Serie A',
+    136: 'Serie B',
+    137: 'Coppa Italia',
     # Norway
-    444: 'Eliteserien',
+    103: 'Eliteserien',
     # Poland
-    453: 'Ekstraklasa',
+    106: 'Ekstraklasa',
     # Portugal
-    462: 'Liga Portugal',
-    # Other
-    486: 'Premier League (Other)',
-    609: 'Premier League (Ukraine)',
+    94: 'Liga Portugal',
+    95: 'Liga Portugal 2',
     # Scotland
-    501: 'Premiership',
+    179: 'Premiership',
     # Spain
-    564: 'La Liga',
-    567: 'La Liga 2',
-    570: 'Copa Del Rey',
+    140: 'La Liga',
+    141: 'La Liga 2',
+    143: 'Copa Del Rey',
     # Sweden
-    573: 'Allsvenskan',
+    113: 'Allsvenskan',
     # Greece
-    591: 'Super League',
+    197: 'Super League',
     # Turkey
-    600: 'Super Lig',
+    203: 'Super Lig',
+    # Ukraine
+    333: 'Premier League (Ukraine)',
 }
 
-# Cup competition league IDs — require stronger stats evidence for team goal markets
-CUP_LEAGUE_IDS = {24, 27, 390, 570}  # FA Cup, Carabao Cup, Coppa Italia, Copa Del Rey
+# Cup competition IDs — require stronger stats evidence for team goal markets
+CUP_LEAGUE_IDS = {45, 48, 137, 143}  # FA Cup, Carabao Cup, Coppa Italia, Copa Del Rey
 
-LEAGUE_FILTER = ','.join(str(lid) for lid in LEAGUE_IDS)
+LEAGUE_FILTER = set(LEAGUE_IDS.keys())
 
 # Map bookmaker lines to our AI markets
 LINE_TO_AI_MARKET = {
-    0.5: 'fh_over_05',   # Over 0.5 → First Half Over 0.5 (closest model)
-    1.5: 'ft_over_15',   # Over 1.5 → Full Time Over 1.5
-    2.5: 'ft_over_25',   # Over 2.5 → dedicated model if available, fallback ft_over_15
-    3.5: 'ft_over_25',   # Over 3.5 → ft_over_25 proxy
+    0.5: 'fh_over_05',
+    1.5: 'ft_over_15',
+    2.5: 'ft_over_25',
+    3.5: 'ft_over_25',
 }
 
 LINE_LABELS = {
@@ -88,7 +99,6 @@ LINE_LABELS = {
     3.5: 'Over 3.5 Goals',
 }
 
-# AI model mapping — uses dedicated models when retrained, falls back to proxies
 AI_MARKET_MAP = {
     'home_to_score_yes': 'home_over_05',
     'away_to_score_yes': 'away_over_05',
@@ -110,7 +120,6 @@ AI_MARKET_MAP = {
     'sh_under_05': 'sh_under_05',
 }
 
-# Fallback mapping when expanded models aren't trained yet
 AI_MARKET_FALLBACK = {
     'btts_yes': 'ft_over_15',
     'home_win': 'home_over_15',
@@ -125,30 +134,25 @@ AI_MARKET_FALLBACK = {
     'away_over_15': 'ft_over_15',
     'fh_under_05': 'fh_over_05',
     'sh_under_05': 'sh_over_05',
-    # Under 2.5 / 1.5 — use the closest trained under model
-    'ft_under_25': 'ft_under_35',   # Under 2.5 → Under 3.5 model (directionally correct)
-    'ft_under_35': 'ft_under_15',   # Under 3.5 → Under 1.5 model as last resort
-    'ft_under_15': 'ft_under_15',   # Already a base model (always available)
+    'ft_under_25': 'ft_under_35',
+    'ft_under_35': 'ft_under_15',
+    'ft_under_15': 'ft_under_15',
 }
 
 
 def fetch_todays_fixtures():
-    """Fetch today's fixtures with over/under odds from SportMonks API."""
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     return fetch_fixtures_by_date(today)
 
+
 def fetch_fixtures_for_rollover(date_str):
-    """Fetch fixtures from ALL leagues (no league filter) for Rollover picks.
-    Searches every available fixture to find the safest bets regardless of
-    league prestige — PSG vs small team, high-scoring lower leagues, etc."""
+    """Fetch fixtures from ALL leagues for Rollover picks."""
     return fetch_fixtures_by_date(date_str, no_league_filter=True)
 
+
 def fetch_fixtures_by_date(date_str, no_league_filter=False):
-    """Fetch fixtures for a given date with odds from SportMonks API.
-    Falls back to football-data.org for UEFA competitions when SportMonks returns 0."""
     fixtures = _fetch_fixtures_for_date(date_str, no_league_filter=no_league_filter)
 
-    # Fallback: if SportMonks has no fixtures, try football-data.org for UEFA
     if not fixtures:
         try:
             from utils.football_data_fallback import fetch_fallback_fixtures
@@ -162,234 +166,295 @@ def fetch_fixtures_by_date(date_str, no_league_filter=False):
 
 
 def _fetch_fixtures_for_date(date_str, no_league_filter=False):
-    """Fetch fixtures for a single date from SportMonks.
-    no_league_filter=True fetches all available leagues (used for Rollover mode)."""
-    league_param = '' if no_league_filter else f'&filters=fixtureLeagues:{LEAGUE_FILTER}'
-    url = (
-        f"{SPORTMONKS_BASE}/fixtures/date/{date_str}"
-        f"?api_token={SPORTMONKS_TOKEN}"
-        f"&include=participants;league;odds.market"
-        f"{league_param}"
-        f"&per_page=50"
-    )
+    """Fetch fixtures + odds for a date from API-Football."""
+    # Step 1: fetch fixtures
+    raw_fixtures = _fetch_raw_fixtures(date_str)
+    if not raw_fixtures:
+        return []
 
+    # Step 2: fetch odds and build fixture_id → markets map
+    odds_map = _fetch_odds_map(date_str)
+
+    # Step 3: parse and merge
     fixtures = []
-    try:
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            body = json.loads(resp.read().decode())
-
-        events = body.get('data', [])
-        for event in events:
-            fixture = _parse_fixture(event)
-            if fixture:
-                fixtures.append(fixture)
-
-        # Handle pagination
-        pagination = body.get('pagination', {})
-        if pagination.get('has_more') or (pagination.get('last_page') and pagination.get('current_page', 1) < pagination['last_page']):
-            page2_url = url + '&page=2'
-            req2 = urllib.request.Request(page2_url)
-            with urllib.request.urlopen(req2, timeout=20) as resp2:
-                body2 = json.loads(resp2.read().decode())
-            for event in body2.get('data', []):
-                fixture = _parse_fixture(event)
-                if fixture:
-                    fixtures.append(fixture)
-
-    except urllib.error.URLError as e:
-        print(f"⚠️ Error fetching fixtures for {date_str}: {e}")
-    except Exception as e:
-        print(f"⚠️ Unexpected error for {date_str}: {e}")
+    for item in raw_fixtures:
+        league_id = (item.get('league') or {}).get('id', 0)
+        if not no_league_filter and league_id not in LEAGUE_FILTER:
+            continue
+        bookmakers = odds_map.get(item.get('fixture', {}).get('id'), [])
+        fixture = _parse_fixture(item, bookmakers)
+        if fixture:
+            fixtures.append(fixture)
 
     print(f"  📅 {date_str}: {len(fixtures)} fixtures")
     return fixtures
 
 
-def _parse_fixture(event):
-    """Parse a single SportMonks fixture, extracting over/under lines and all markets"""
+def _fetch_raw_fixtures(date_str):
+    """GET /fixtures?date={date}&timezone=UTC, handles pagination."""
+    items = []
     try:
-        participants = event.get('participants', [])
-        home_team = away_team = ''
-        home_logo = away_logo = ''
-        home_short = away_short = ''
-        home_id = away_id = None
+        body = _get('fixtures', {'date': date_str, 'timezone': 'UTC'})
+        items.extend(body.get('response', []))
+        # API-Football paginates at 20 results — check for more pages
+        paging = body.get('paging', {})
+        total_pages = paging.get('total', 1)
+        for page in range(2, total_pages + 1):
+            body2 = _get('fixtures', {'date': date_str, 'timezone': 'UTC', 'page': page})
+            items.extend(body2.get('response', []))
+    except Exception as e:
+        print(f"⚠️ Fixtures fetch error for {date_str}: {e}")
+    return items
 
-        for p in participants:
-            loc = (p.get('meta') or {}).get('location', '')
-            if loc == 'home':
-                home_team = p.get('name', '')
-                home_logo = p.get('image_path', '')
-                home_short = p.get('short_code', '')
-                home_id = p.get('id')
-            elif loc == 'away':
-                away_team = p.get('name', '')
-                away_logo = p.get('image_path', '')
-                away_short = p.get('short_code', '')
-                away_id = p.get('id')
 
-        if not home_team or not away_team:
+def _fetch_odds_map(date_str):
+    """GET /odds?date={date} → {fixture_id: bookmakers_list}"""
+    odds_map = {}
+    try:
+        body = _get('odds', {'date': date_str})
+        for entry in body.get('response', []):
+            fix_id = (entry.get('fixture') or {}).get('id')
+            if fix_id:
+                odds_map[fix_id] = entry.get('bookmakers', [])
+        # Handle pagination for odds
+        paging = body.get('paging', {})
+        total_pages = paging.get('total', 1)
+        for page in range(2, min(total_pages + 1, 6)):  # cap at 5 pages
+            body2 = _get('odds', {'date': date_str, 'page': page})
+            for entry in body2.get('response', []):
+                fix_id = (entry.get('fixture') or {}).get('id')
+                if fix_id and fix_id not in odds_map:
+                    odds_map[fix_id] = entry.get('bookmakers', [])
+    except Exception as e:
+        print(f"⚠️ Odds fetch error for {date_str}: {e}")
+    return odds_map
+
+
+def _parse_fixture(item, bookmakers=None):
+    """Parse one API-Football fixture item + its bookmakers into our fixture dict."""
+    try:
+        fix = item.get('fixture', {})
+        league = item.get('league', {})
+        teams = item.get('teams', {})
+
+        home = teams.get('home', {})
+        away = teams.get('away', {})
+        if not home.get('name') or not away.get('name'):
             return None
 
-        league_data = event.get('league') or {}
-        league_id = league_data.get('id', event.get('league_id', 0))
-        league_name = _league_name(league_id)
-        league_logo = league_data.get('image_path', '')
-        season_id = event.get('season_id')
+        league_id = league.get('id', 0)
+        season = league.get('season', get_current_season())
+        league_name = LEAGUE_IDS.get(league_id, league.get('name', f'League {league_id}'))
 
-        starting_at = event.get('starting_at', '')
+        # Parse odds markets from bookmakers
+        lines, markets = _parse_bookmakers(bookmakers or [])
 
-        odds_list = event.get('odds', [])
-
-        # Parse over/under odds — collect best (lowest) Over odds per line
-        lines = {}  # {total_float: {'over': best_odds, 'under': best_odds}}
-        # Additional markets
-        fulltime_result = {}    # {'home': best, 'draw': best, 'away': best}
-        double_chance = {}      # {'home_draw': best, 'away_draw': best, 'home_away': best}
-        btts = {}               # {'yes': best, 'no': best}
-        home_to_score = {}      # {'yes': best, 'no': best}
-        away_to_score = {}      # {'yes': best, 'no': best}
-        first_half_goals = {}   # {total: {'over': best, 'under': best}}
-        second_half_goals = {}  # {total: {'over': best, 'under': best}}
-        home_goals = {}         # {total: {'over': best, 'under': best}}
-        away_goals = {}         # {total: {'over': best, 'under': best}}
-
-        for odd in odds_list:
-            market = odd.get('market') or {}
-            dev_name = market.get('developer_name', '')
-            mkt_name = market.get('name', '')
-            label = (odd.get('label') or '').strip()
-            value_str = odd.get('value')
-            total_str = odd.get('total')
-
-            if value_str is None:
-                continue
-            try:
-                value = float(value_str)
-            except (ValueError, TypeError):
-                continue
-
-            # --- Fulltime Over/Under ---
-            if 'OVER_UNDER' in dev_name or 'Over/Under' in mkt_name:
-                if total_str is None:
-                    continue
-                try:
-                    total = float(total_str)
-                except (ValueError, TypeError):
-                    continue
-                if total not in lines:
-                    lines[total] = {}
-                if label == 'Over':
-                    if 'over' not in lines[total] or value < lines[total]['over']:
-                        lines[total]['over'] = value
-                elif label == 'Under':
-                    if 'under' not in lines[total] or value < lines[total]['under']:
-                        lines[total]['under'] = value
-
-            # --- Fulltime Result (1X2) ---
-            elif dev_name == 'FULLTIME_RESULT' or (market.get('id') == 1 and '1X2' in mkt_name.upper()):
-                _update_best_low(fulltime_result, _normalize_1x2_label(label), value)
-
-            # --- Double Chance ---
-            elif dev_name == 'DOUBLE_CHANCE' or market.get('id') == 2:
-                dc_key = _normalize_dc_label(label)
-                if dc_key:
-                    _update_best_low(double_chance, dc_key, value)
-
-            # --- Both Teams to Score ---
-            elif dev_name == 'BOTH_TEAMS_TO_SCORE' or market.get('id') == 14:
-                _update_best_low(btts, label.lower(), value)
-
-            # --- Home Team to Score ---
-            elif dev_name == 'HOME_TEAM_TO_SCORE' or market.get('id') == 36:
-                _update_best_low(home_to_score, label.lower(), value)
-
-            # --- Away Team to Score ---
-            elif dev_name == 'AWAY_TEAM_TO_SCORE' or market.get('id') == 35:
-                _update_best_low(away_to_score, label.lower(), value)
-
-            # --- 1st Half Goals Over/Under ---
-            elif dev_name == '1ST_HALF_GOALS' or market.get('id') == 28:
-                _parse_ou_market(first_half_goals, label, total_str, value)
-
-            # --- 2nd Half Goals Over/Under ---
-            elif dev_name == '2ND_HALF_GOALS' or market.get('id') == 53:
-                _parse_ou_market(second_half_goals, label, total_str, value)
-
-            # --- Home Team Goals Over/Under ---
-            elif dev_name == 'HOME_TEAM_GOALS' or market.get('id') == 20:
-                _parse_ou_market(home_goals, label, total_str, value)
-
-            # --- Away Team Goals Over/Under ---
-            elif dev_name == 'AWAY_TEAM_GOALS' or market.get('id') == 21:
-                _parse_ou_market(away_goals, label, total_str, value)
-
-        # Filter to useful lines with reasonable odds
-        available_lines = {}
-        for point in [0.5, 1.5, 2.5, 3.5]:
-            if point in lines and 'over' in lines[point]:
-                odd = lines[point]['over']
-                if 1.01 <= odd <= 5.0:
-                    available_lines[point] = {
-                        'over_odds': odd,
-                        'under_odds': lines[point].get('under', 3.0),
-                    }
-
-        # Build markets dict
-        markets = {}
-        if fulltime_result:
-            markets['fulltime_result'] = fulltime_result
-        if double_chance:
-            markets['double_chance'] = double_chance
-        if btts:
-            markets['btts'] = btts
-        if home_to_score:
-            markets['home_to_score'] = home_to_score
-        if away_to_score:
-            markets['away_to_score'] = away_to_score
-        if first_half_goals:
-            markets['first_half_goals'] = first_half_goals
-        if second_half_goals:
-            markets['second_half_goals'] = second_half_goals
-        if home_goals:
-            markets['home_goals'] = home_goals
-        if away_goals:
-            markets['away_goals'] = away_goals
-
-        # Need at least over/under lines OR some other markets
-        if not available_lines and not markets:
+        # Need at least some odds OR some markets to be useful
+        if not lines and not markets:
             return None
 
         return {
-            'home_team': home_team,
-            'away_team': away_team,
-            'home_team_id': home_id,
-            'away_team_id': away_id,
-            'season_id': season_id,
-            'commence_time': starting_at,
+            'home_team': home.get('name', ''),
+            'away_team': away.get('name', ''),
+            'home_team_id': home.get('id'),
+            'away_team_id': away.get('id'),
+            'season': season,
+            'commence_time': fix.get('date', ''),
             'league': league_id,
             'league_name': league_name,
-            'league_logo': league_logo,
-            'home_logo': home_logo,
-            'away_logo': away_logo,
-            'home_short_code': home_short,
-            'away_short_code': away_short,
-            'lines': available_lines,
+            'league_logo': league.get('logo', ''),
+            'home_logo': home.get('logo', ''),
+            'away_logo': away.get('logo', ''),
+            'home_short_code': '',
+            'away_short_code': '',
+            'lines': lines,
             'markets': markets,
         }
     except Exception:
         return None
 
 
+def _parse_bookmakers(bookmakers):
+    """
+    Parse API-Football bookmakers list into (lines, markets).
+    Uses best (lowest) odds across all bookmakers per market/value.
+    """
+    lines = {}          # {total_float: {'over': best, 'under': best}}
+    fulltime_result = {}
+    double_chance = {}
+    btts = {}
+    home_to_score = {}
+    away_to_score = {}
+    first_half_goals = {}
+    second_half_goals = {}
+    home_goals = {}
+    away_goals = {}
+
+    for bk in bookmakers:
+        for bet in bk.get('bets', []):
+            bet_id = bet.get('id')
+            bet_name = (bet.get('name') or '').lower()
+            values = bet.get('values', [])
+
+            # Match Winner (1X2)
+            if bet_id == 1 or 'match winner' in bet_name:
+                for v in values:
+                    lbl = (v.get('value') or '').strip()
+                    odd = _safe_float(v.get('odd'))
+                    if odd is None:
+                        continue
+                    key = _normalize_1x2_label(lbl)
+                    _update_best_low(fulltime_result, key, odd)
+
+            # Goals Over/Under (full time)
+            elif bet_id == 5 or ('goals over/under' in bet_name and 'half' not in bet_name and 'home' not in bet_name and 'away' not in bet_name):
+                for v in values:
+                    lbl = (v.get('value') or '').strip()  # e.g. "Over 2.5"
+                    odd = _safe_float(v.get('odd'))
+                    if odd is None:
+                        continue
+                    parts = lbl.split()
+                    if len(parts) != 2:
+                        continue
+                    direction = parts[0].lower()
+                    total = _safe_float(parts[1])
+                    if total is None:
+                        continue
+                    if total not in lines:
+                        lines[total] = {}
+                    if direction == 'over':
+                        if 'over' not in lines[total] or odd < lines[total]['over']:
+                            lines[total]['over'] = odd
+                    elif direction == 'under':
+                        if 'under' not in lines[total] or odd < lines[total]['under']:
+                            lines[total]['under'] = odd
+
+            # Both Teams Score
+            elif bet_id == 7 or 'both teams score' in bet_name or 'both teams to score' in bet_name:
+                for v in values:
+                    lbl = (v.get('value') or '').strip().lower()
+                    odd = _safe_float(v.get('odd'))
+                    if odd:
+                        _update_best_low(btts, lbl, odd)
+
+            # Double Chance
+            elif bet_id == 8 or 'double chance' in bet_name:
+                for v in values:
+                    lbl = (v.get('value') or '').strip()
+                    odd = _safe_float(v.get('odd'))
+                    if odd is None:
+                        continue
+                    key = _normalize_dc_label(lbl)
+                    if key:
+                        _update_best_low(double_chance, key, odd)
+
+            # Home Team Score a Goal
+            elif bet_id == 6 or 'home team score' in bet_name:
+                for v in values:
+                    lbl = (v.get('value') or '').strip().lower()
+                    odd = _safe_float(v.get('odd'))
+                    if odd:
+                        _update_best_low(home_to_score, lbl, odd)
+
+            # Away Team Score a Goal
+            elif bet_id == 35 or 'away team score' in bet_name:
+                for v in values:
+                    lbl = (v.get('value') or '').strip().lower()
+                    odd = _safe_float(v.get('odd'))
+                    if odd:
+                        _update_best_low(away_to_score, lbl, odd)
+
+            # 1st Half Goals Over/Under
+            elif bet_id == 10 or ('first half' in bet_name and 'goal' in bet_name):
+                _parse_ou_bet(first_half_goals, values)
+
+            # 2nd Half Goals Over/Under
+            elif bet_id == 33 or ('second half' in bet_name and 'goal' in bet_name):
+                _parse_ou_bet(second_half_goals, values)
+
+            # Home Team Goals Over/Under
+            elif bet_id == 13 or ('home' in bet_name and 'goals over' in bet_name):
+                _parse_ou_bet(home_goals, values)
+
+            # Away Team Goals Over/Under
+            elif bet_id == 14 or ('away' in bet_name and 'goals over' in bet_name):
+                _parse_ou_bet(away_goals, values)
+
+    # Filter lines to useful range with reasonable odds
+    available_lines = {}
+    for point in [0.5, 1.5, 2.5, 3.5]:
+        if point in lines and 'over' in lines[point]:
+            odd = lines[point]['over']
+            if 1.01 <= odd <= 5.0:
+                available_lines[point] = {
+                    'over_odds': odd,
+                    'under_odds': lines[point].get('under', 3.0),
+                }
+
+    markets = {}
+    if fulltime_result:
+        markets['fulltime_result'] = fulltime_result
+    if double_chance:
+        markets['double_chance'] = double_chance
+    if btts:
+        markets['btts'] = btts
+    if home_to_score:
+        markets['home_to_score'] = home_to_score
+    if away_to_score:
+        markets['away_to_score'] = away_to_score
+    if first_half_goals:
+        markets['first_half_goals'] = first_half_goals
+    if second_half_goals:
+        markets['second_half_goals'] = second_half_goals
+    if home_goals:
+        markets['home_goals'] = home_goals
+    if away_goals:
+        markets['away_goals'] = away_goals
+
+    return available_lines, markets
+
+
+def _parse_ou_bet(target, values):
+    """Parse Over/Under bet values (e.g. 'Over 0.5', 'Under 0.5') into target dict."""
+    for v in values:
+        lbl = (v.get('value') or '').strip()
+        odd = _safe_float(v.get('odd'))
+        if odd is None:
+            continue
+        parts = lbl.split()
+        if len(parts) != 2:
+            continue
+        direction = parts[0].lower()
+        total = _safe_float(parts[1])
+        if total is None:
+            continue
+        if total not in target:
+            target[total] = {}
+        if direction == 'over':
+            if 'over' not in target[total] or odd < target[total]['over']:
+                target[total]['over'] = odd
+        elif direction == 'under':
+            if 'under' not in target[total] or odd < target[total]['under']:
+                target[total]['under'] = odd
+
+
+def _safe_float(v):
+    if v is None:
+        return None
+    try:
+        f = float(v)
+        return f if f > 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
 def _update_best_low(d, key, value):
-    """Update dict with value only if it's lower (best odds for bettor)"""
-    if key and value > 1.0:
+    if key and value and value > 1.0:
         if key not in d or value < d[key]:
             d[key] = value
 
 
 def _normalize_1x2_label(label):
-    """Normalize 1X2 label to home/draw/away"""
     l = label.lower().strip()
     if l in ('home', '1'):
         return 'home'
@@ -401,44 +466,26 @@ def _normalize_1x2_label(label):
 
 
 def _normalize_dc_label(label):
-    """Normalize Double Chance label"""
     l = label.lower().strip()
-    if 'home' in l and 'draw' in l or l in ('1x', 'x1'):
+    if ('home' in l and 'draw' in l) or l in ('1x', 'x1', 'home/draw', 'draw/home'):
         return 'home_draw'
-    if 'away' in l and 'draw' in l or l in ('x2', '2x'):
+    if ('away' in l and 'draw' in l) or l in ('x2', '2x', 'draw/away', 'away/draw'):
         return 'away_draw'
-    if 'home' in l and 'away' in l or l in ('12', '1 or 2'):
+    if ('home' in l and 'away' in l) or l in ('12', '1 or 2', 'home/away', 'away/home'):
         return 'home_away'
     return ''
 
 
-def _parse_ou_market(target, label, total_str, value):
-    """Parse an over/under sub-market into target dict"""
-    if total_str is None:
-        return
-    try:
-        total = float(total_str)
-    except (ValueError, TypeError):
-        return
-    if total not in target:
-        target[total] = {}
-    lab = label.strip().lower()
-    if lab == 'over':
-        if 'over' not in target[total] or value < target[total]['over']:
-            target[total]['over'] = value
-    elif lab == 'under':
-        if 'under' not in target[total] or value < target[total]['under']:
-            target[total]['under'] = value
-
-
-def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None, free_mode=False):
+def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None, af_stats=None, free_mode=False):
     """
     Generate all match options from all markets for a list of fixtures.
-    Now integrates live SportMonks stats + standings + statistical qualification + edge calculation.
+    Integrates API-Football live stats + standings + statistical qualification + edge calculation.
+    af_stats takes priority over sm_stats for backward compatibility.
     """
     from utils.stat_qualifier import passes_odds_safety, qualify_and_score, confidence_label
-    from utils.sportmonks_stats import get_team_standing
+    from utils.apifootball_stats import get_team_standing
 
+    live_stats = af_stats or sm_stats
     match_options = []
 
     for fix in fixtures:
@@ -446,40 +493,36 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         away = fix['away_team']
         markets = fix.get('markets', {})
 
-        # --- Fetch live team stats from SportMonks ---
         home_id = fix.get('home_team_id')
         away_id = fix.get('away_team_id')
-        season_id = fix.get('season_id')
-        is_cup = fix.get('league') in CUP_LEAGUE_IDS
+        league_id = fix.get('league')
+        season = fix.get('season', get_current_season())
+        is_cup = league_id in CUP_LEAGUE_IDS
+
         home_live = None
         away_live = None
         h2h_data = None
         standings_ctx = None
 
-        if sm_stats and home_id and away_id:
+        if live_stats and home_id and away_id:
             try:
-                home_live = sm_stats.fetch_team_stats(home_id)
-                away_live = sm_stats.fetch_team_stats(away_id)
-                h2h_data = sm_stats.fetch_h2h(home_id, away_id)
+                home_live = live_stats.fetch_team_stats(home_id, league_id, season)
+                away_live = live_stats.fetch_team_stats(away_id, league_id, season)
+                h2h_data = live_stats.fetch_h2h(home_id, away_id)
             except Exception as e:
                 print(f"⚠️ Live stats error for {home} vs {away}: {e}")
 
-        # --- Fetch league standings for context ---
-        if season_id and home_id and away_id:
+        if league_id and home_id and away_id:
             try:
-                home_standing = get_team_standing(season_id, home_id)
-                away_standing = get_team_standing(season_id, away_id)
+                home_standing = get_team_standing(league_id, home_id, season)
+                away_standing = get_team_standing(league_id, away_id, season)
                 if home_standing or away_standing:
-                    standings_ctx = {
-                        'home': home_standing,
-                        'away': away_standing,
-                    }
+                    standings_ctx = {'home': home_standing, 'away': away_standing}
                     if home_standing and away_standing:
                         print(f"  📊 {home} #{home_standing['position']} ({home_standing['zone']}) vs {away} #{away_standing['position']} ({away_standing['zone']})")
             except Exception as e:
                 print(f"⚠️ Standings error for {home} vs {away}: {e}")
 
-        # --- Build 18-feature dict for XGBoost ---
         primary_line = next(iter(fix['lines'].values()), {})
         if home_live and away_live:
             features = _build_features_from_live(
@@ -494,7 +537,6 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
                 under15_odds=primary_line.get('under_odds', 2.5),
             )
 
-        # Run AI prediction for all 14 markets
         ai_pred = predictor.predict_match(features)
 
         base_info = {
@@ -509,18 +551,15 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             'home_short_code': fix.get('home_short_code', ''),
             'away_short_code': fix.get('away_short_code', ''),
             'all_predictions': {k: round(float(v), 3) for k, v in ai_pred.items()},
-            # Match context for UI breakdown
             'home_form': _build_form_summary(home_live, 'home') if home_live else None,
             'away_form': _build_form_summary(away_live, 'away') if away_live else None,
             'h2h': h2h_data,
             'standings': standings_ctx,
         }
 
-        # Helper to add a qualified option
         def _try_add(market_label, odds, ai_market_key, line=None, source='api'):
             if not passes_odds_safety(market_label, odds, free_mode=free_mode):
                 return
-            # Use dedicated model if available, fall back to proxy
             actual_key = ai_market_key
             if actual_key not in ai_pred:
                 actual_key = AI_MARKET_FALLBACK.get(ai_market_key, ai_market_key)
@@ -548,17 +587,14 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
         # === Over/Under lines ===
         for point, line_data in fix['lines'].items():
-            # Over market
             odds = line_data['over_odds']
             ai_market = LINE_TO_AI_MARKET.get(point, 'ft_over_15')
             label = LINE_LABELS.get(point, f'Over {point} Goals')
             _try_add(label, odds, ai_market, line=point)
 
-            # Under markets — now includes Under 2.5 (key safer market for low-scoring fixtures)
             under_odds = line_data.get('under_odds', 0)
             if under_odds > 0 and point >= 2.5:
                 under_label = f'Under {point} Goals'
-                # Use a dedicated under model key so the fallback chain resolves correctly
                 if point == 2.5:
                     under_ai_market = 'ft_under_25'
                 elif point == 3.5:
@@ -574,7 +610,6 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
         # === Fulltime Result ===
         ftr = markets.get('fulltime_result', {})
-
         if 'home' in ftr:
             _try_add('Home Win', ftr['home'], AI_MARKET_MAP['home_win'])
         if 'away' in ftr:
@@ -608,18 +643,16 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
         # === Home/Away Goals Over 0.5 ===
         hg = markets.get('home_goals', {})
         if 0.5 in hg and 'over' in hg[0.5]:
-            # Cup games: only include if home team scores freely at home (avg ≥ 1.2)
             home_venue_avg = (home_live or {}).get('home_avg_scored', 1.5)
             if not is_cup or home_venue_avg >= 1.2:
                 _try_add('Home Over 0.5 Goals', hg[0.5]['over'], AI_MARKET_MAP['home_over_05'])
         ag = markets.get('away_goals', {})
         if 0.5 in ag and 'over' in ag[0.5]:
-            # Cup games: only include if away team scores away frequently (avg ≥ 1.0)
             away_venue_avg = (away_live or {}).get('away_avg_scored', 1.0)
             if not is_cup or away_venue_avg >= 1.0:
                 _try_add('Away Over 0.5 Goals', ag[0.5]['over'], AI_MARKET_MAP['away_over_05'])
 
-        # === Draw (1X2) — high odds, valuable for free picks ===
+        # === Draw ===
         if 'draw' in ftr:
             _try_add('Draw', ftr['draw'], AI_MARKET_MAP['draw'])
 
@@ -647,23 +680,25 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
 
 def _build_features_from_live(home_stats, away_stats, over15_odds=1.5, under15_odds=2.5):
-    """Build feature dict for XGBoost models, using live SportMonks stats.
-    Provides both original 18 features and extended features when available."""
+    """Build feature dict for XGBoost models using API-Football team stats."""
     home_attack = home_stats['avg_goals_scored'] / max(away_stats['avg_goals_conceded'], 0.3)
     away_attack = away_stats['avg_goals_scored'] / max(home_stats['avg_goals_conceded'], 0.3)
-    
-    features = {
-        # Original 18 features
+
+    # Use actual minute-bucket data from API-Football; fall back to approximation
+    home_fh = home_stats.get('avg_first_half_goals', home_stats['avg_goals_scored'] * 0.45)
+    away_fh = away_stats.get('avg_first_half_goals', away_stats['avg_goals_scored'] * 0.42)
+
+    return {
         'home_goals_per_game': home_stats['avg_goals_scored'],
         'home_goals_conceded_per_game': home_stats['avg_goals_conceded'],
         'home_over15_rate': home_stats['over15_rate'],
         'home_over05_rate': home_stats.get('scored_in_rate', 0.78),
-        'home_first_half_goals': home_stats['avg_goals_scored'] * 0.45,
+        'home_first_half_goals': home_fh,
         'away_goals_per_game': away_stats['avg_goals_scored'],
         'away_goals_conceded_per_game': away_stats['avg_goals_conceded'],
         'away_over15_rate': away_stats['over15_rate'],
         'away_over05_rate': away_stats.get('scored_in_rate', 0.70),
-        'away_first_half_goals': away_stats['avg_goals_scored'] * 0.42,
+        'away_first_half_goals': away_fh,
         'home_home_goals': home_stats['home_avg_scored'],
         'home_home_conceded': home_stats['home_avg_conceded'],
         'away_away_goals': away_stats['away_avg_scored'],
@@ -672,7 +707,7 @@ def _build_features_from_live(home_stats, away_stats, over15_odds=1.5, under15_o
         'defensive_strength': home_stats['home_avg_conceded'] + away_stats['away_avg_conceded'],
         'over15_odds': over15_odds,
         'under15_odds': under15_odds,
-        # Extended features (used by retrained models)
+        # Extended features
         'home_btts_rate': home_stats.get('btts_rate', 0.55),
         'away_btts_rate': away_stats.get('btts_rate', 0.55),
         'home_clean_sheet_rate': home_stats.get('clean_sheet_rate', 0.30),
@@ -680,34 +715,28 @@ def _build_features_from_live(home_stats, away_stats, over15_odds=1.5, under15_o
         'home_attack_strength': home_attack,
         'away_attack_strength': away_attack,
         'attack_vs_defense_ratio': home_attack / max(away_attack, 0.3),
-        'home_momentum': 0.0,  # Not available from live stats
+        'home_momentum': 0.0,
         'away_momentum': 0.0,
-        'home_goals_std': 0.5,  # Default variance
+        'home_goals_std': 0.5,
         'away_goals_std': 0.5,
         'home_over25_rate': home_stats.get('over25_rate', 0.45),
         'away_over25_rate': away_stats.get('over25_rate', 0.40),
         'home_scored_in_rate': home_stats.get('scored_in_rate', 0.78),
         'away_scored_in_rate': away_stats.get('scored_in_rate', 0.70),
     }
-    return features
 
 
-def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_odds=2.60, sm_stats=None, free_mode=False):
-    """
-    Build the best daily rollover slip using hybrid architecture.
-    Tries multiple market options per fixture to find ideal combined odds.
-    """
+def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_odds=2.60, sm_stats=None, af_stats=None, free_mode=False):
     from itertools import product
 
-    match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats, free_mode=free_mode)
+    live_stats = af_stats or sm_stats
+    match_options = _generate_match_options(fixtures, predictor, stats_calculator, af_stats=live_stats, free_mode=free_mode)
 
     if not match_options:
         return _empty_result(fixtures)
 
-    # Sort by composite score descending
     match_options.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
 
-    # Group options by fixture (top 3 per match)
     fixture_options = {}
     for opt in match_options:
         key = f"{opt['home_team']}_{opt['away_team']}"
@@ -726,12 +755,9 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
     best_score = -1
     best_count = 0
 
-    # Try 4-match first (preferred), then 3, then 2
     for target_count in [4, 3, 2]:
         if num_fixtures < target_count:
             continue
-
-        # If we already have a combo with more matches, skip smaller combos
         if best_slip and best_count > target_count:
             break
 
@@ -747,7 +773,6 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                     continue
 
                 avg_composite = sum(p.get('composite_score', 0) for p in market_combo) / len(market_combo)
-                # Prefer ideal odds range
                 ideal_bonus = 1.0
                 if 2.00 <= combined <= 2.30:
                     ideal_bonus = 1.25
@@ -756,7 +781,7 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                 elif 1.80 <= combined < 1.90:
                     ideal_bonus = 1.05
                 elif 1.50 <= combined < 1.80:
-                    ideal_bonus = 0.90  # Acceptable but not ideal
+                    ideal_bonus = 0.90
 
                 score = avg_composite * ideal_bonus
 
@@ -766,7 +791,6 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                     best_count = target_count
 
     if not best_slip:
-        # Fallback: any 2 picks hitting 1.50+
         for i, a in enumerate(match_options[:10]):
             for j, b in enumerate(match_options[:10]):
                 if i >= j:
@@ -777,7 +801,6 @@ def build_daily_slip(fixtures, predictor, stats_calculator, max_matches=4, max_o
                     break
             if best_slip:
                 break
-        # Last resort: single strongest pick
         if not best_slip and match_options:
             best_slip = [match_options[0]]
 
@@ -816,58 +839,33 @@ def _empty_result(fixtures):
     }
 
 
-def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None, free_mode=False, exclude_matches=None, exclude_match_markets=None, market_penalties=None):
-    """
-    Build a higher-odds parlay from ALL markets.
-    User controls number of matches (2-20).
-    Each match can use any market (1X2, BTTS, Over/Under, DC, etc.)
-    Select matches with highest composite score within the odds range.
+def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_odds=1.30, max_odds=3.00, sm_stats=None, af_stats=None, free_mode=False, exclude_matches=None, exclude_match_markets=None, market_penalties=None):
+    live_stats = af_stats or sm_stats
+    match_options = _generate_match_options(fixtures, predictor, stats_calculator, af_stats=live_stats, free_mode=free_mode)
 
-    exclude_matches: set of "HomeTeam_AwayTeam" keys to skip entirely.
-    exclude_match_markets: set of "HomeTeam_AwayTeam_Market" keys to skip
-        (allows same match with a different market).
-    market_penalties: dict of {market_label: multiplier} from market_tracker.
-        Markets with poor recent win rates get composite score penalties,
-        making the slip builder naturally avoid repeating losing markets.
-    """
-    match_options = _generate_match_options(fixtures, predictor, stats_calculator, sm_stats, free_mode=free_mode)
-
-    # Filter to options within odds range
     filtered = [o for o in match_options if min_odds <= o['odds'] <= max_odds]
 
-    # Exclude entire matches (legacy)
     if exclude_matches:
-        filtered = [
-            o for o in filtered
-            if f"{o['home_team']}_{o['away_team']}" not in exclude_matches
-        ]
+        filtered = [o for o in filtered if f"{o['home_team']}_{o['away_team']}" not in exclude_matches]
         print(f"   After excluding {len(exclude_matches)} matches: {len(filtered)} options remain")
 
-    # Exclude specific match+market combos (smart exclusion)
     if exclude_match_markets:
-        filtered = [
-            o for o in filtered
-            if f"{o['home_team']}_{o['away_team']}_{o['market']}" not in exclude_match_markets
-        ]
+        filtered = [o for o in filtered if f"{o['home_team']}_{o['away_team']}_{o['market']}" not in exclude_match_markets]
         print(f"   After excluding {len(exclude_match_markets)} match+market combos: {len(filtered)} options remain")
 
-    # Apply market performance penalties (pseudo-learning from recent results)
     if market_penalties:
         for opt in filtered:
             penalty = market_penalties.get(opt['market'], 1.0)
             if penalty != 1.0:
                 opt['composite_score'] = opt.get('composite_score', 0) * penalty
 
-    # Sort by composite score descending (penalties already applied)
     filtered.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
 
-    # Pick top num_matches unique matches (one market per match)
-    # Diversity cap: max 3 of the same market type per slip (avoids 10x DC(12))
     slip_matches = []
     combined_odds = 1.0
     used_matches = set()
     market_type_count = {}
-    MAX_SAME_MARKET = 2  # Max 2 picks with the same market per slip (diversity)
+    MAX_SAME_MARKET = 2
 
     for opt in filtered:
         match_key = f"{opt['home_team']}_{opt['away_team']}"
@@ -875,7 +873,6 @@ def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_
             continue
         market_label = opt['market']
         if market_type_count.get(market_label, 0) >= MAX_SAME_MARKET:
-            # This market type is saturated — skip to encourage diversity
             continue
         slip_matches.append(opt)
         combined_odds *= opt['odds']
@@ -884,7 +881,6 @@ def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_
         if len(slip_matches) >= num_matches:
             break
 
-    # If diversity cap caused us to fall short, relax to 3 (not unlimited) and fill remaining
     if len(slip_matches) < num_matches:
         RELAXED_MAX = 3
         for opt in filtered:
@@ -915,7 +911,6 @@ def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_
 
 
 def _format_slip_matches(matches):
-    """Format slip matches for API response"""
     result = []
     for m in matches:
         entry = {
@@ -944,7 +939,6 @@ def _format_slip_matches(matches):
             },
         }
 
-        # Match context for breakdown UI
         if m.get('home_form'):
             entry['home_form'] = m['home_form']
         if m.get('away_form'):
@@ -978,7 +972,6 @@ def _format_slip_matches(matches):
 
 
 def _format_all_predictions(predictions):
-    """Format all analyzed matches for API response"""
     result = []
     for p in predictions[:20]:
         result.append({
@@ -1016,12 +1009,10 @@ def _slip_confidence(matches):
 def _league_name(league_id):
     if league_id in LEAGUE_IDS:
         return LEAGUE_IDS[league_id]
-    # Negative IDs = football-data.org fallback (name set in fixture dict)
     return f'League {league_id}'
 
 
 def _build_form_summary(stats, side):
-    """Build compact form summary from team stats for UI."""
     if not stats:
         return None
     return {
@@ -1035,7 +1026,7 @@ def _build_form_summary(stats, side):
     }
 
 
-# ── Public exports for use by rollover_generator and other modules ──────────
+# ── Public exports ───────────────────────────────────────────────────────────
 generate_match_options = _generate_match_options
 format_slip_matches = _format_slip_matches
 slip_confidence = _slip_confidence
