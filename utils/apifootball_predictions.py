@@ -33,8 +33,8 @@ _PREDICTIONS_CACHE = {}   # fixture_id → {data, ts}
 _INJURIES_CACHE    = {}   # fixture_id → {data, ts}
 _CACHE_TTL         = 6 * 3600   # 6 hours
 
-MAX_PREDICTIONS_CALLS = 150   # cap per run to protect daily quota
-MAX_INJURIES_CALLS    = 100
+MAX_PREDICTIONS_CALLS = 50    # cap per run — only no-odds fixtures need predictions
+MAX_INJURIES_CALLS    = 30
 
 
 # ── Blend weights ─────────────────────────────────────────────────────────────

@@ -175,20 +175,15 @@ def _fetch_fixtures_for_date(date_str, no_league_filter=False):
     # Step 2: fetch odds and build fixture_id → markets map
     odds_map = _fetch_odds_map(date_str)
 
-    # Step 3: identify fixtures without bookmaker odds → fetch API-Football
-    # predictions for them so the qualification engine can still score them.
-    # Also collect all IDs for blending even when odds exist.
+    # Step 3: identify fixtures without bookmaker odds — they need predictions to qualify.
     no_odds_ids = []
-    all_ids     = []
     for item in raw_fixtures:
         league_id = (item.get('league') or {}).get('id', 0)
         if not no_league_filter and league_id not in LEAGUE_FILTER:
             continue
         fid = (item.get('fixture') or {}).get('id')
-        if fid:
-            all_ids.append(fid)
-            if not odds_map.get(fid):
-                no_odds_ids.append(fid)
+        if fid and not odds_map.get(fid):
+            no_odds_ids.append(fid)
 
     predictions_map = {}
     injuries_map    = {}
@@ -197,14 +192,14 @@ def _fetch_fixtures_for_date(date_str, no_league_filter=False):
             fetch_predictions_for_fixtures,
             fetch_injuries_for_fixtures,
         )
-        # Priority: no-odds fixtures first (need predictions to qualify at all),
-        # then top-league fixtures (for blending). Cap combined at 200.
-        ids_with_odds = [i for i in all_ids if i not in no_odds_ids]
-        priority_ids  = no_odds_ids + ids_with_odds
-        predictions_map = fetch_predictions_for_fixtures(priority_ids[:200])
+        # Only fetch predictions for fixtures that LACK bookmaker odds.
+        # Fixtures with bookmaker odds use XGBoost + real odds (no extra API call needed).
+        # Fixtures without odds NEED predictions to derive lines and qualify at all.
+        # Cap at 50 to avoid timing out the web request handler.
+        predictions_map = fetch_predictions_for_fixtures(no_odds_ids[:50])
 
-        # Injuries: fetch for all fixtures we have predictions for
-        injuries_map = fetch_injuries_for_fixtures(list(predictions_map.keys())[:100])
+        # Injuries: only for fixtures we fetched predictions for (already limited)
+        injuries_map = fetch_injuries_for_fixtures(list(predictions_map.keys())[:30])
     except Exception as e:
         print(f"⚠️ Predictions/injuries fetch skipped: {e}")
 
