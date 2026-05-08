@@ -235,7 +235,7 @@ def _qualify_by_market(label, ai_prob, implied_prob, home, away, h2h):
 
 def _qualify_over25(ai_prob, implied, home, away, h2h):
     if home is None or away is None:
-        return max(ai_prob, implied + 0.03)
+        return max(ai_prob, implied + 0.06)
 
     combined = home['avg_goals_scored'] + away['avg_goals_scored']
     avg_o25 = (home['over25_rate'] + away['over25_rate']) / 2
@@ -253,7 +253,7 @@ def _qualify_over25(ai_prob, implied, home, away, h2h):
 
 def _qualify_over15(ai_prob, implied, home, away, h2h):
     if home is None or away is None:
-        return max(ai_prob, implied + 0.03)
+        return max(ai_prob, implied + 0.05)
 
     combined = home['avg_goals_scored'] + away['avg_goals_scored']
     avg_o15 = (home['over15_rate'] + away['over15_rate']) / 2

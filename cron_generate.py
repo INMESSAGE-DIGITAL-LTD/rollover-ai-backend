@@ -36,7 +36,7 @@ def main():
     print("✅ Models loaded")
 
     # Fetch fixtures for the target date
-    fixtures = fetch_fixtures_by_date(target_str)
+    fixtures = fetch_fixtures_by_date(target_str, no_league_filter=True)
 
     # Init SQLite for backup
     init_history_db()

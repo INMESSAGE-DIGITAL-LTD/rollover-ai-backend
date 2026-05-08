@@ -169,7 +169,7 @@ def get_parlay():
         # Default to 5 matches
         num_matches = int(request.args.get('num_matches', 5))
         min_odds = float(request.args.get('min_odds', 1.10))
-        max_odds = float(request.args.get('max_odds', 1.30))
+        max_odds = float(request.args.get('max_odds', 1.57))
         
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
@@ -225,8 +225,8 @@ def get_daily_picks(date_str):
         print(f"⚠️ No Firestore doc for {date_str}, generating on-demand...")
         
         # Fetch fixtures for requested date (uses a separate call — date-aware)
-        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
-        
+        fixtures = fetch_fixtures_by_date(date_str, no_league_filter=True) if date_str else fetch_todays_fixtures()
+
         if not fixtures:
             return jsonify({
                 'date': date_str,
@@ -249,7 +249,7 @@ def get_daily_picks(date_str):
             fixtures, predictor, stats_calculator, af_stats,
             num_matches=10,
             min_odds=1.10,
-            max_odds=1.30,
+            max_odds=1.57,
             sm_proxy=af_proxy,
             date_str=date_str,
         )
@@ -326,7 +326,7 @@ def rollover_picks_by_date(date_str):
         print(f"⚠️ No rollover doc for {date_str}, generating on-demand...")
         from services.rollover_generator import generate_rollover_picks
 
-        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
+        fixtures = fetch_fixtures_by_date(date_str, no_league_filter=True) if date_str else fetch_todays_fixtures()
 
         if not fixtures:
             return jsonify({
@@ -424,7 +424,7 @@ def ai_pro_picks_by_date(date_str):
         print(f"⚠️ No AI Pro doc for {date_str}, generating on-demand...")
         from services.ai_pro_generator import generate_ai_pro_picks
 
-        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
+        fixtures = fetch_fixtures_by_date(date_str, no_league_filter=True) if date_str else fetch_todays_fixtures()
 
         if not fixtures:
             return jsonify({
@@ -495,7 +495,7 @@ def free_picks_by_date(date_str):
             return jsonify(cached)
 
         # Always fetch fixtures — needed for build_parlay_slip below
-        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
+        fixtures = fetch_fixtures_by_date(date_str, no_league_filter=True) if date_str else fetch_todays_fixtures()
 
         db = get_firestore_client()
         doc = db.collection('daily_predictions').document(date_str).get()
@@ -548,7 +548,7 @@ def free_picks_by_date(date_str):
             fixtures, predictor, stats_calculator,
             num_matches=6,
             min_odds=1.10,
-            max_odds=1.30,
+            max_odds=1.57,
             af_stats=af_stats,
             free_mode=False,  # Use strict safety rules
             exclude_match_markets=exclude_match_markets,
@@ -821,7 +821,7 @@ def regenerate_picks():
             pass
 
         # Fetch fixtures once
-        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
+        fixtures = fetch_fixtures_by_date(date_str, no_league_filter=True) if date_str else fetch_todays_fixtures()
         if not fixtures:
             print(f"❌ Regenerate: No fixtures for {date_str}")
             return

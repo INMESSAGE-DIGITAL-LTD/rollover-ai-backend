@@ -142,7 +142,7 @@ AI_MARKET_FALLBACK = {
 
 def fetch_todays_fixtures():
     today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
-    return fetch_fixtures_by_date(today)
+    return fetch_fixtures_by_date(today, no_league_filter=True)
 
 
 def fetch_fixtures_for_rollover(date_str):
