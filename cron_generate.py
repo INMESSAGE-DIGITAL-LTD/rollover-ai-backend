@@ -1,6 +1,7 @@
 """
 Render Cron Job: Generate daily predictions and write to Firestore.
-Runs daily at 00:00 WAT (23:00 UTC) via Render's built-in cron scheduler.
+Runs daily at 00:05 UTC (01:05 WAT) via Render's built-in cron scheduler.
+Scheduled AFTER the API-Football quota resets at 00:00 UTC.
 
 No HTTP. No Flask. Pure worker script.
 Imports the shared generator service for all business logic.
@@ -21,9 +22,9 @@ from services.generator import generate_and_store
 
 
 def main():
-    # Cron runs at 23:00 UTC = 00:00 WAT. We generate picks for the NEXT UTC
-    # day so that WAT users see their "today" picks ready at midnight.
-    target_str = (datetime.utcnow() + timedelta(days=1)).strftime('%Y-%m-%d')
+    # Cron runs at 00:05 UTC (after quota reset at 00:00 UTC).
+    # At 00:05 UTC, utcnow() is already the correct WAT "today" date.
+    target_str = datetime.utcnow().strftime('%Y-%m-%d')
     print(f"🕛 Cron worker started — generating picks for {target_str}")
 
     # Load models
