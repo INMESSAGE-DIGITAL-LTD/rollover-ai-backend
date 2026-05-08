@@ -346,7 +346,7 @@ def rollover_picks_by_date(date_str):
 
         result = generate_rollover_picks(
             fixtures, predictor, stats_calculator, af_stats,
-            af_proxy=af_proxy,
+            sm_proxy=af_proxy,
             date_str=date_str,
             market_penalties=_mp,
         )
@@ -856,7 +856,7 @@ def regenerate_picks():
                 from services.rollover_generator import generate_rollover_picks
                 result = generate_rollover_picks(
                     fixtures, predictor, stats_calculator, af_stats,
-                    af_proxy=af_proxy,
+                    sm_proxy=af_proxy,
                     date_str=date_str,
                     market_penalties=market_penalties,
                 )
