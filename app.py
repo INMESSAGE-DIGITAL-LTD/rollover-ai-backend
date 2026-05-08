@@ -202,15 +202,15 @@ def get_daily_picks(date_str):
         # ─── 1. Fast path: check Firestore for cached picks ───
         db = get_firestore_client()
         doc = db.collection('daily_predictions').document(date_str).get()
-        
+
         if doc.exists:
             data = doc.to_dict()
             matches = data.get('matches', [])
-            if matches:
+            if len(matches) >= 4:
                 combined_odds = 1.0
                 for m in matches:
                     combined_odds *= float(m.get('odds', 1.0))
-                    
+
                 print(f"⚡ Serving Firestore picks for {date_str} ({len(matches)} matches)")
                 return jsonify({
                     'date': date_str,
