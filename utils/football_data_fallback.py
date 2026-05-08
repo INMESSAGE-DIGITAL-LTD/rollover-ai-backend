@@ -1,7 +1,7 @@
 """
-Football-data.org fallback for UEFA competitions not in SportMonks Basic plan.
-Free tier covers: Champions League (CL), Europa League (EL) + major domestics.
-Used when SportMonks returns 0 fixtures for a date.
+Football-data.org fallback — used when API-Football quota is exhausted.
+Free tier covers major European leagues + Copa Libertadores.
+No daily quota limit. Used as emergency backup source.
 """
 import os
 import json
@@ -12,16 +12,26 @@ from datetime import datetime
 FOOTBALL_DATA_TOKEN = os.environ.get('FOOTBALL_DATA_TOKEN', 'd09de38c27b546d592d286fe94a4cd2f')
 FOOTBALL_DATA_BASE = 'https://api.football-data.org/v4'
 
-# Free tier (TIER_ONE) competitions accessible without paid plan
+# All free-tier (TIER_ONE) competitions — no API key restrictions
 FALLBACK_COMPETITIONS = {
-    'CL': 'UEFA Champions League',
+    'PL':  'English Premier League',
+    'BL1': 'Bundesliga',
+    'SA':  'Serie A',
+    'FL1': 'Ligue 1',
+    'PD':  'La Liga',
+    'DED': 'Eredivisie',
+    'ELC': 'Championship',
+    'PPL': 'Liga Portugal',
+    'CL':  'UEFA Champions League',
+    'CLI': 'Copa Libertadores',
+    'BSA': 'Brasileirao Serie A',
 }
 
-# Estimated odds by market based on team strength differential
-# Used when football-data.org doesn't provide full odds
+# Conservative default lines used when bookmaker odds are unavailable.
+# Higher than typical so implied probability is lower → easier for XGBoost to show edge.
 _DEFAULT_LINES = {
-    1.5: {'over_odds': 1.25, 'under_odds': 3.50},
-    2.5: {'over_odds': 1.75, 'under_odds': 2.00},
+    1.5: {'over_odds': 1.44, 'under_odds': 2.60},
+    2.5: {'over_odds': 1.85, 'under_odds': 1.90},
 }
 
 
@@ -109,20 +119,19 @@ def _parse_match(match, comp_name):
                 'home_away': _dc_odds(home_win_odds, away_win_odds),
             }
         else:
-            # Estimate 1X2 from competition context (UEFA = competitive)
             markets['fulltime_result'] = {
-                'home': 2.10,
+                'home': 2.20,
                 'draw': 3.30,
-                'away': 3.50,
+                'away': 3.20,
             }
             markets['double_chance'] = {
-                'home_draw': 1.25,
-                'away_draw': 1.55,
-                'home_away': 1.30,
+                'home_draw': 1.35,
+                'away_draw': 1.50,
+                'home_away': 1.40,
             }
 
-        # BTTS estimate for UEFA matches (typically high-scoring)
-        markets['btts'] = {'yes': 1.75, 'no': 2.00}
+        # BTTS typical odds for top leagues
+        markets['btts'] = {'yes': 1.80, 'no': 1.95}
 
         # Use competition ID as league_id (negative to avoid collision with SportMonks)
         comp_id = match.get('competition', {}).get('id', 0)
