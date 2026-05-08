@@ -299,7 +299,7 @@ def _parse_bookmakers(bookmakers):
             # Match Winner (1X2)
             if bet_id == 1 or 'match winner' in bet_name:
                 for v in values:
-                    lbl = (v.get('value') or '').strip()
+                    lbl = str(v.get('value') or '').strip()
                     odd = _safe_float(v.get('odd'))
                     if odd is None:
                         continue
@@ -309,7 +309,7 @@ def _parse_bookmakers(bookmakers):
             # Goals Over/Under (full time)
             elif bet_id == 5 or ('goals over/under' in bet_name and 'half' not in bet_name and 'home' not in bet_name and 'away' not in bet_name):
                 for v in values:
-                    lbl = (v.get('value') or '').strip()  # e.g. "Over 2.5"
+                    lbl = str(v.get('value') or '').strip()  # e.g. "Over 2.5"
                     odd = _safe_float(v.get('odd'))
                     if odd is None:
                         continue
@@ -332,7 +332,7 @@ def _parse_bookmakers(bookmakers):
             # Both Teams Score
             elif bet_id == 7 or 'both teams score' in bet_name or 'both teams to score' in bet_name:
                 for v in values:
-                    lbl = (v.get('value') or '').strip().lower()
+                    lbl = str(v.get('value') or '').strip().lower()
                     odd = _safe_float(v.get('odd'))
                     if odd:
                         _update_best_low(btts, lbl, odd)
@@ -340,7 +340,7 @@ def _parse_bookmakers(bookmakers):
             # Double Chance
             elif bet_id == 8 or 'double chance' in bet_name:
                 for v in values:
-                    lbl = (v.get('value') or '').strip()
+                    lbl = str(v.get('value') or '').strip()
                     odd = _safe_float(v.get('odd'))
                     if odd is None:
                         continue
@@ -351,7 +351,7 @@ def _parse_bookmakers(bookmakers):
             # Home Team Score a Goal
             elif bet_id == 6 or 'home team score' in bet_name:
                 for v in values:
-                    lbl = (v.get('value') or '').strip().lower()
+                    lbl = str(v.get('value') or '').strip().lower()
                     odd = _safe_float(v.get('odd'))
                     if odd:
                         _update_best_low(home_to_score, lbl, odd)
@@ -359,7 +359,7 @@ def _parse_bookmakers(bookmakers):
             # Away Team Score a Goal
             elif bet_id == 35 or 'away team score' in bet_name:
                 for v in values:
-                    lbl = (v.get('value') or '').strip().lower()
+                    lbl = str(v.get('value') or '').strip().lower()
                     odd = _safe_float(v.get('odd'))
                     if odd:
                         _update_best_low(away_to_score, lbl, odd)
@@ -417,7 +417,7 @@ def _parse_bookmakers(bookmakers):
 def _parse_ou_bet(target, values):
     """Parse Over/Under bet values (e.g. 'Over 0.5', 'Under 0.5') into target dict."""
     for v in values:
-        lbl = (v.get('value') or '').strip()
+        lbl = str(v.get('value') or '').strip()
         odd = _safe_float(v.get('odd'))
         if odd is None:
             continue
