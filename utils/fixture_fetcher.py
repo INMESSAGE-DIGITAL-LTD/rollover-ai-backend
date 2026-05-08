@@ -166,7 +166,7 @@ def fetch_fixtures_by_date(date_str, no_league_filter=False):
 
 
 def _fetch_fixtures_for_date(date_str, no_league_filter=False):
-    """Fetch fixtures + odds + predictions for a date from API-Football."""
+    """Fetch fixtures + odds + predictions + injuries for a date from API-Football."""
     # Step 1: fetch fixtures
     raw_fixtures = _fetch_raw_fixtures(date_str)
     if not raw_fixtures:
@@ -191,15 +191,22 @@ def _fetch_fixtures_for_date(date_str, no_league_filter=False):
                 no_odds_ids.append(fid)
 
     predictions_map = {}
+    injuries_map    = {}
     try:
-        from utils.apifootball_predictions import fetch_predictions_for_fixtures
-        # Priority: fixtures without odds (need predictions to qualify at all)
+        from utils.apifootball_predictions import (
+            fetch_predictions_for_fixtures,
+            fetch_injuries_for_fixtures,
+        )
+        # Priority: no-odds fixtures first (need predictions to qualify at all),
         # then top-league fixtures (for blending). Cap combined at 200.
         ids_with_odds = [i for i in all_ids if i not in no_odds_ids]
-        priority_ids  = no_odds_ids + ids_with_odds  # no-odds first
+        priority_ids  = no_odds_ids + ids_with_odds
         predictions_map = fetch_predictions_for_fixtures(priority_ids[:200])
+
+        # Injuries: fetch for all fixtures we have predictions for
+        injuries_map = fetch_injuries_for_fixtures(list(predictions_map.keys())[:100])
     except Exception as e:
-        print(f"⚠️ Predictions fetch skipped: {e}")
+        print(f"⚠️ Predictions/injuries fetch skipped: {e}")
 
     # Step 4: parse and merge
     fixtures = []
@@ -210,12 +217,15 @@ def _fetch_fixtures_for_date(date_str, no_league_filter=False):
         fid        = (item.get('fixture') or {}).get('id')
         bookmakers = odds_map.get(fid, [])
         prediction = predictions_map.get(fid)
-        fixture    = _parse_fixture(item, bookmakers, prediction=prediction)
+        injuries   = injuries_map.get(fid)
+        fixture    = _parse_fixture(item, bookmakers, prediction=prediction,
+                                    injuries=injuries, fixture_id=fid)
         if fixture:
             fixtures.append(fixture)
 
     print(f"  📅 {date_str}: {len(fixtures)} fixtures "
-          f"({len(predictions_map)} with predictions)")
+          f"({len(predictions_map)} with predictions, "
+          f"{len(injuries_map)} with injuries)")
     return fixtures
 
 
@@ -259,7 +269,7 @@ def _fetch_odds_map(date_str):
     return odds_map
 
 
-def _parse_fixture(item, bookmakers=None, prediction=None):
+def _parse_fixture(item, bookmakers=None, prediction=None, injuries=None, fixture_id=None):
     """Parse one API-Football fixture item + its bookmakers into our fixture dict."""
     try:
         fix    = item.get('fixture', {})
@@ -277,6 +287,17 @@ def _parse_fixture(item, bookmakers=None, prediction=None):
 
         # Parse odds markets from bookmakers
         lines, markets = _parse_bookmakers(bookmakers or [])
+
+        # Record opening odds for movement tracking (no-op if already recorded)
+        fid = fixture_id or fix.get('id')
+        if fid and lines:
+            try:
+                from utils.apifootball_predictions import record_opening_odds
+                for point, line_data in lines.items():
+                    record_opening_odds(fid, f'over_{point}',  line_data.get('over', 0))
+                    record_opening_odds(fid, f'under_{point}', line_data.get('under', 0))
+            except Exception:
+                pass
 
         # No bookmaker odds — try to derive from API-Football prediction
         odds_source = 'bookmaker'
@@ -305,7 +326,9 @@ def _parse_fixture(item, bookmakers=None, prediction=None):
             'lines':         lines,
             'markets':       markets,
             'odds_source':   odds_source,
-            'af_prediction': prediction,  # carried into _generate_match_options for blending
+            'fixture_id':    fid,
+            'af_prediction': prediction,   # for blending in _generate_match_options
+            'af_injuries':   injuries,     # for injury adjustment
         }
     except Exception:
         return None
@@ -577,15 +600,29 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
         ai_pred = predictor.predict_match(features)
 
-        # Blend XGBoost output with API-Football prediction signal.
-        # Fixtures that derived their odds from predictions (no bookmaker odds)
-        # get a higher API-Football weight (0.50) since it's the primary signal.
-        af_pred = fix.get('af_prediction')
+        # ── Blend XGBoost with API-Football predictions ───────────────────────
+        # Weight depends on odds source:
+        #   bookmaker odds → 50% XGBoost / 50% API-Football
+        #   prediction-derived (non-top leagues) → 25% XGBoost / 75% API-Football
+        af_pred     = fix.get('af_prediction')
+        odds_source = fix.get('odds_source', 'bookmaker')
         if af_pred:
             try:
-                from utils.apifootball_predictions import blend_ai_with_prediction
-                weight = 0.50 if fix.get('odds_source') == 'prediction' else 0.35
-                ai_pred = blend_ai_with_prediction(ai_pred, af_pred, weight=weight)
+                from utils.apifootball_predictions import (
+                    blend_ai_with_prediction,
+                    apply_injury_adjustment,
+                )
+                ai_pred = blend_ai_with_prediction(
+                    ai_pred, af_pred, odds_source=odds_source)
+            except Exception:
+                pass
+
+        # ── Apply injury adjustments ──────────────────────────────────────────
+        injuries = fix.get('af_injuries')
+        if injuries:
+            try:
+                from utils.apifootball_predictions import apply_injury_adjustment
+                ai_pred = apply_injury_adjustment(ai_pred, injuries)
             except Exception:
                 pass
 
@@ -637,6 +674,22 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             )
             if qual is None:
                 return
+
+            # Apply odds movement multiplier to composite_score.
+            # Sharp money shortening odds = stronger signal → boost score.
+            movement_mult = 1.0
+            fid = fix.get('fixture_id')
+            if fid:
+                try:
+                    from utils.apifootball_predictions import get_odds_movement
+                    movement_mult = get_odds_movement(
+                        fid,
+                        f'over_{line}' if line else market_label,
+                        odds,
+                    )
+                except Exception:
+                    pass
+
             opt = dict(base_info)
             opt.update({
                 'line': line,
@@ -646,7 +699,7 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
                 'confidence': confidence_label(qual['edge']),
                 'edge': qual['edge'],
                 'stability': qual['stability'],
-                'composite_score': qual['composite_score'],
+                'composite_score': qual['composite_score'] * movement_mult,
                 'source': source,
             })
             match_options.append(opt)
