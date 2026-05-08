@@ -104,7 +104,7 @@ def get_fixtures():
     from datetime import datetime as dt
     try:
         today = dt.utcnow().strftime('%Y-%m-%d')
-        result = sm_proxy.get_fixtures(today)
+        result = af_proxy.get_fixtures(today)
         return jsonify({
             'date': today,
             'fixtures': result.get('fixtures', []),
@@ -118,7 +118,7 @@ def get_fixtures():
 def get_livescores():
     """Get currently in-play fixtures with live scores (polled every 2 min)."""
     try:
-        result = sm_proxy.get_livescores()
+        result = af_proxy.get_livescores()
         return jsonify({
             'fixtures': result.get('fixtures', []),
             'count': result.get('count', 0),
@@ -142,7 +142,7 @@ def get_fixtures_by_date(date_str):
 
     try:
         # Use proxy which includes scores, match_status, ht scores
-        result = sm_proxy.get_fixtures(date_str)
+        result = af_proxy.get_fixtures(date_str)
         return jsonify({
             'date': date_str,
             'fixtures': result.get('fixtures', []),
@@ -164,7 +164,7 @@ def get_parlay():
     """
     try:
         # Get cached fixtures from proxy (fast)
-        fixtures = sm_proxy.get_cached_fixtures().get('fixtures', [])
+        fixtures = af_proxy.get_fixtures(__import__("datetime").datetime.utcnow().strftime("%Y-%m-%d")).get('fixtures', [])
         
         # Default to 5 matches
         num_matches = int(request.args.get('num_matches', 5))
@@ -176,7 +176,7 @@ def get_parlay():
             num_matches=num_matches,
             min_odds=min_odds,
             max_odds=max_odds,
-            sm_stats=sm_stats
+            af_stats=af_stats,
         )
         return jsonify(result)
     except Exception as e:
@@ -503,8 +503,8 @@ def free_picks_by_date(date_str):
             if fixtures:
                 from services.generator import generate_and_store
                 generate_and_store(
-                    fixtures, predictor, stats_calculator, sm_stats,
-                    sm_proxy=sm_proxy,
+                    fixtures, predictor, stats_calculator, af_stats,
+                    af_proxy=af_proxy,
                     date_str=date_str,
                 )
                 doc = db.collection('daily_predictions').document(date_str).get()
@@ -601,7 +601,7 @@ def ai_parlay():
     - num_matches: Max matches (default 3)
     """
     try:
-        fixtures = sm_proxy.get_cached_fixtures().get('fixtures', [])
+        fixtures = af_proxy.get_fixtures(__import__("datetime").datetime.utcnow().strftime("%Y-%m-%d")).get('fixtures', [])
         num_matches = int(request.args.get('num_matches', 3))
         
         result = build_parlay_slip(
@@ -813,7 +813,7 @@ def regenerate_picks():
         from utils.market_tracker import get_market_penalties
         market_penalties = {}
         try:
-            market_penalties = get_market_penalties(sm_proxy, lookback_days=7, min_picks=3)
+            market_penalties = get_market_penalties(af_proxy, lookback_days=7, min_picks=3)
         except Exception:
             pass
 
@@ -833,8 +833,8 @@ def regenerate_picks():
                 # Regenerate
                 from services.ai_pro_generator import generate_ai_pro_picks
                 result = generate_ai_pro_picks(
-                    fixtures, predictor, stats_calculator, sm_stats,
-                    sm_proxy=sm_proxy,
+                    fixtures, predictor, stats_calculator, af_stats,
+                    af_proxy=af_proxy,
                     date_str=date_str,
                     market_penalties=market_penalties,
                 )
@@ -852,8 +852,8 @@ def regenerate_picks():
 
                 from services.rollover_generator import generate_rollover_picks
                 result = generate_rollover_picks(
-                    fixtures, predictor, stats_calculator, sm_stats,
-                    sm_proxy=sm_proxy,
+                    fixtures, predictor, stats_calculator, af_stats,
+                    af_proxy=af_proxy,
                     date_str=date_str,
                     market_penalties=market_penalties,
                 )
@@ -871,8 +871,8 @@ def regenerate_picks():
 
                 from services.generator import generate_and_store
                 result = generate_and_store(
-                    fixtures, predictor, stats_calculator, sm_stats,
-                    sm_proxy=sm_proxy,
+                    fixtures, predictor, stats_calculator, af_stats,
+                    af_proxy=af_proxy,
                     date_str=date_str,
                 )
                 results['free'] = result.get('status', 'unknown')
