@@ -321,7 +321,101 @@ def _parse_injuries(response):
     }
 
 
-# ── Odds derivation ───────────────────────────────────────────────────────────
+# ── Primary probability builder ───────────────────────────────────────────────
+
+def af_prediction_to_ai_pred(af_pred):
+    """
+    Convert an API-Football prediction dict into the ai_pred format that
+    _try_add expects (same keys as MultiMarketPredictor.predict_match).
+
+    This replaces XGBoost as the primary probability source. Every market
+    is derived from API-Football's predicted goals (Poisson) and win/draw/away
+    percentages. XGBoost only runs when af_pred is None (fallback).
+    """
+    hg = max(0.1, af_pred.get('predicted_home_goals', 1.3))
+    ag = max(0.1, af_pred.get('predicted_away_goals', 1.0))
+
+    home_p = af_pred['home_prob']
+    draw_p = af_pred['draw_prob']
+    away_p = af_pred['away_prob']
+
+    # Per-team Poisson (independent scoring model)
+    home_p0 = math.exp(-hg)
+    home_p1 = hg * home_p0
+    away_p0 = math.exp(-ag)
+    away_p1 = ag * away_p0
+
+    home_over05 = _cap(1.0 - home_p0)
+    home_over15 = _cap(1.0 - home_p0 - home_p1, hi=0.92)
+    away_over05 = _cap(1.0 - away_p0)
+    away_over15 = _cap(1.0 - away_p0 - away_p1, hi=0.92)
+
+    btts     = _cap(home_over05 * away_over05, hi=0.92)
+    btts_no  = _cap(1.0 - btts)
+
+    # Total-goals Poisson (already computed in _parse_prediction but replicate here)
+    over15   = af_pred.get('over15_prob', _cap(1.0 - math.exp(-(hg + ag)) - (hg + ag) * math.exp(-(hg + ag))))
+    over25   = af_pred.get('over25_prob', 0.45)
+    under25  = _cap(1.0 - over25)
+    # Under 3.5 ≈ P(total goals ≤ 3)
+    lam      = hg + ag
+    lp0      = math.exp(-lam)
+    lp1      = lam * lp0
+    lp2      = (lam ** 2 / 2.0) * lp0
+    lp3      = (lam ** 3 / 6.0) * lp0
+    under35  = _cap(lp0 + lp1 + lp2 + lp3)
+
+    # Half-time: ~42% of goals in first half, ~58% in second
+    fh_lam  = (hg + ag) * 0.42
+    sh_lam  = (hg + ag) * 0.58
+    fh_p0   = math.exp(-max(0.05, fh_lam))
+    sh_p0   = math.exp(-max(0.05, sh_lam))
+
+    fh_over05  = _cap(1.0 - fh_p0)
+    fh_under05 = _cap(1.0 - fh_over05)
+    sh_over05  = _cap(1.0 - sh_p0)
+    sh_under05 = _cap(1.0 - sh_over05)
+
+    fh_p1      = fh_lam * fh_p0
+    ht_over15  = _cap(1.0 - fh_p0 - fh_p1, hi=0.65)
+    ht_under15 = _cap(1.0 - ht_over15)
+
+    return {
+        'ft_over_15':   over15,
+        'ft_under_15':  _cap(1.0 - over15),
+        'ft_over_25':   over25,
+        'ft_under_25':  under25,
+        'ft_under_35':  under35,
+        'ht_over_15':   ht_over15,
+        'ht_under_15':  ht_under15,
+        'home_over_05': home_over05,
+        'home_under_05': _cap(1.0 - home_over05),
+        'home_over_15': home_over15,
+        'home_under_15': _cap(1.0 - home_over15),
+        'away_over_05': away_over05,
+        'away_under_05': _cap(1.0 - away_over05),
+        'away_over_15': away_over15,
+        'away_under_15': _cap(1.0 - away_over15),
+        'fh_over_05':   fh_over05,
+        'fh_under_05':  fh_under05,
+        'sh_over_05':   sh_over05,
+        'sh_under_05':  sh_under05,
+        'btts_yes':     btts,
+        'btts_no':      btts_no,
+        'home_win':     home_p,
+        'draw':         draw_p,
+        'away_win':     away_p,
+        'dc_home_draw': _cap(home_p + draw_p),
+        'dc_away_draw': _cap(away_p + draw_p),
+        'dc_home_away': _cap(home_p + away_p),
+    }
+
+
+def _cap(v, lo=0.03, hi=0.97):
+    return max(lo, min(hi, float(v)))
+
+
+
 
 def derive_market_odds(pred):
     """

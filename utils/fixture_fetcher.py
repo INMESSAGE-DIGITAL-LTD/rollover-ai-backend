@@ -585,37 +585,37 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
         league_tendency = None  # placeholder for future league-specific adjustments
         primary_line = next(iter(fix['lines'].values()), {})
-        if home_live and away_live:
-            features = _build_features_from_live(
-                home_live, away_live,
-                over15_odds=primary_line.get('over_odds', 1.5),
-                under15_odds=primary_line.get('under_odds', 2.5),
-            )
-        else:
-            features = stats_calculator.build_match_features(
-                home, away,
-                over15_odds=primary_line.get('over_odds', 1.5),
-                under15_odds=primary_line.get('under_odds', 2.5),
-            )
 
-        ai_pred = predictor.predict_match(features)
+        af_pred = fix.get('af_prediction')
 
-        # ── Blend XGBoost with API-Football predictions ───────────────────────
-        # Weight depends on odds source:
-        #   bookmaker odds → 50% XGBoost / 50% API-Football
-        #   prediction-derived (non-top leagues) → 25% XGBoost / 75% API-Football
-        af_pred     = fix.get('af_prediction')
-        odds_source = fix.get('odds_source', 'bookmaker')
+        # ── Primary path: API-Football predictions ────────────────────────────
+        # When available, use API-Football's data as the sole probability source.
+        # Their global database (millions of matches, every league) is far more
+        # reliable than our XGBoost model (24k matches, mostly top European leagues).
+        # XGBoost only runs as a fallback when API-Football has no prediction.
         if af_pred:
             try:
-                from utils.apifootball_predictions import (
-                    blend_ai_with_prediction,
-                    apply_injury_adjustment,
+                from utils.apifootball_predictions import af_prediction_to_ai_pred
+                ai_pred = af_prediction_to_ai_pred(af_pred)
+            except Exception as e:
+                print(f"⚠️ af_prediction_to_ai_pred failed for {home} vs {away}: {e}")
+                af_pred = None   # fall through to XGBoost
+
+        # ── Fallback path: XGBoost model ──────────────────────────────────────
+        if not af_pred:
+            if home_live and away_live:
+                features = _build_features_from_live(
+                    home_live, away_live,
+                    over15_odds=primary_line.get('over_odds', 1.5),
+                    under15_odds=primary_line.get('under_odds', 2.5),
                 )
-                ai_pred = blend_ai_with_prediction(
-                    ai_pred, af_pred, odds_source=odds_source)
-            except Exception:
-                pass
+            else:
+                features = stats_calculator.build_match_features(
+                    home, away,
+                    over15_odds=primary_line.get('over_odds', 1.5),
+                    under15_odds=primary_line.get('under_odds', 2.5),
+                )
+            ai_pred = predictor.predict_match(features)
 
         # ── Apply injury adjustments ──────────────────────────────────────────
         injuries = fix.get('af_injuries')
