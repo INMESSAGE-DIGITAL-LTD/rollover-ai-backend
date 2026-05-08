@@ -166,7 +166,7 @@ def fetch_fixtures_by_date(date_str, no_league_filter=False):
 
 
 def _fetch_fixtures_for_date(date_str, no_league_filter=False):
-    """Fetch fixtures + odds for a date from API-Football."""
+    """Fetch fixtures + odds + predictions for a date from API-Football."""
     # Step 1: fetch fixtures
     raw_fixtures = _fetch_raw_fixtures(date_str)
     if not raw_fixtures:
@@ -175,18 +175,47 @@ def _fetch_fixtures_for_date(date_str, no_league_filter=False):
     # Step 2: fetch odds and build fixture_id → markets map
     odds_map = _fetch_odds_map(date_str)
 
-    # Step 3: parse and merge
+    # Step 3: identify fixtures without bookmaker odds → fetch API-Football
+    # predictions for them so the qualification engine can still score them.
+    # Also collect all IDs for blending even when odds exist.
+    no_odds_ids = []
+    all_ids     = []
+    for item in raw_fixtures:
+        league_id = (item.get('league') or {}).get('id', 0)
+        if not no_league_filter and league_id not in LEAGUE_FILTER:
+            continue
+        fid = (item.get('fixture') or {}).get('id')
+        if fid:
+            all_ids.append(fid)
+            if not odds_map.get(fid):
+                no_odds_ids.append(fid)
+
+    predictions_map = {}
+    try:
+        from utils.apifootball_predictions import fetch_predictions_for_fixtures
+        # Priority: fixtures without odds (need predictions to qualify at all)
+        # then top-league fixtures (for blending). Cap combined at 200.
+        ids_with_odds = [i for i in all_ids if i not in no_odds_ids]
+        priority_ids  = no_odds_ids + ids_with_odds  # no-odds first
+        predictions_map = fetch_predictions_for_fixtures(priority_ids[:200])
+    except Exception as e:
+        print(f"⚠️ Predictions fetch skipped: {e}")
+
+    # Step 4: parse and merge
     fixtures = []
     for item in raw_fixtures:
         league_id = (item.get('league') or {}).get('id', 0)
         if not no_league_filter and league_id not in LEAGUE_FILTER:
             continue
-        bookmakers = odds_map.get(item.get('fixture', {}).get('id'), [])
-        fixture = _parse_fixture(item, bookmakers)
+        fid        = (item.get('fixture') or {}).get('id')
+        bookmakers = odds_map.get(fid, [])
+        prediction = predictions_map.get(fid)
+        fixture    = _parse_fixture(item, bookmakers, prediction=prediction)
         if fixture:
             fixtures.append(fixture)
 
-    print(f"  📅 {date_str}: {len(fixtures)} fixtures")
+    print(f"  📅 {date_str}: {len(fixtures)} fixtures "
+          f"({len(predictions_map)} with predictions)")
     return fixtures
 
 
@@ -230,45 +259,53 @@ def _fetch_odds_map(date_str):
     return odds_map
 
 
-def _parse_fixture(item, bookmakers=None):
+def _parse_fixture(item, bookmakers=None, prediction=None):
     """Parse one API-Football fixture item + its bookmakers into our fixture dict."""
     try:
-        fix = item.get('fixture', {})
+        fix    = item.get('fixture', {})
         league = item.get('league', {})
-        teams = item.get('teams', {})
+        teams  = item.get('teams', {})
 
         home = teams.get('home', {})
         away = teams.get('away', {})
         if not home.get('name') or not away.get('name'):
             return None
 
-        league_id = league.get('id', 0)
-        season = league.get('season', get_current_season())
+        league_id   = league.get('id', 0)
+        season      = league.get('season', get_current_season())
         league_name = LEAGUE_IDS.get(league_id, league.get('name', f'League {league_id}'))
 
         # Parse odds markets from bookmakers
         lines, markets = _parse_bookmakers(bookmakers or [])
 
-        # Need at least some odds OR some markets to be useful
+        # No bookmaker odds — try to derive from API-Football prediction
+        odds_source = 'bookmaker'
         if not lines and not markets:
-            return None
+            if prediction:
+                from utils.apifootball_predictions import derive_market_odds
+                lines, markets = derive_market_odds(prediction)
+                odds_source = 'prediction'
+            else:
+                return None  # No odds and no prediction → skip
 
         return {
-            'home_team': home.get('name', ''),
-            'away_team': away.get('name', ''),
-            'home_team_id': home.get('id'),
-            'away_team_id': away.get('id'),
-            'season': season,
+            'home_team':     home.get('name', ''),
+            'away_team':     away.get('name', ''),
+            'home_team_id':  home.get('id'),
+            'away_team_id':  away.get('id'),
+            'season':        season,
             'commence_time': fix.get('date', ''),
-            'league': league_id,
-            'league_name': league_name,
-            'league_logo': league.get('logo', ''),
-            'home_logo': home.get('logo', ''),
-            'away_logo': away.get('logo', ''),
+            'league':        league_id,
+            'league_name':   league_name,
+            'league_logo':   league.get('logo', ''),
+            'home_logo':     home.get('logo', ''),
+            'away_logo':     away.get('logo', ''),
             'home_short_code': '',
             'away_short_code': '',
-            'lines': lines,
-            'markets': markets,
+            'lines':         lines,
+            'markets':       markets,
+            'odds_source':   odds_source,
+            'af_prediction': prediction,  # carried into _generate_match_options for blending
         }
     except Exception:
         return None
@@ -539,6 +576,18 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             )
 
         ai_pred = predictor.predict_match(features)
+
+        # Blend XGBoost output with API-Football prediction signal.
+        # Fixtures that derived their odds from predictions (no bookmaker odds)
+        # get a higher API-Football weight (0.50) since it's the primary signal.
+        af_pred = fix.get('af_prediction')
+        if af_pred:
+            try:
+                from utils.apifootball_predictions import blend_ai_with_prediction
+                weight = 0.50 if fix.get('odds_source') == 'prediction' else 0.35
+                ai_pred = blend_ai_with_prediction(ai_pred, af_pred, weight=weight)
+            except Exception:
+                pass
 
         base_info = {
             'home_team': home,
