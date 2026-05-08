@@ -243,42 +243,39 @@ def get_daily_picks(date_str):
         except Exception:
             pass
 
-        # Generate full 10 matches standard
-        result = build_parlay_slip(
-            fixtures, predictor, stats_calculator,
-            num_matches=10,  # Always generate 10 for storage
+        # Generate and write to Firestore
+        from services.generator import generate_and_store
+        gen_result = generate_and_store(
+            fixtures, predictor, stats_calculator, af_stats,
+            num_matches=10,
             min_odds=1.10,
             max_odds=1.30,
-            af_stats=af_stats,
-            free_mode=False,
-            market_penalties=_mp,
+            sm_proxy=af_proxy,
+            date_str=date_str,
         )
-        
-        # Re-read from Firestore (generator writes there)
-        doc = db.collection('daily_predictions').document(date_str).get()
-        if doc.exists:
-            data = doc.to_dict()
-            matches = data.get('matches', [])
-            print(f"💾 Saved generated picks to Firestore")
-            
-            combined_odds = 1.0
-            for m in matches:
-                combined_odds *= float(m.get('odds', 1.0))
-                
-            return jsonify({
-                'date': date_str,
-                'matches': matches,
-                'match_count': len(matches),
-                'combined_odds': round(combined_odds, 2),
-                'slip_confidence': data.get('slip_confidence', 'HIGH'),
-                'source': 'generated',
-            })
-        
+
+        if gen_result.get('status') == 'success':
+            doc2 = db.collection('daily_predictions').document(date_str).get()
+            if doc2.exists:
+                data = doc2.to_dict()
+                matches = data.get('matches', [])
+                combined_odds = 1.0
+                for m in matches:
+                    combined_odds *= float(m.get('odds', 1.0))
+                return jsonify({
+                    'date': date_str,
+                    'matches': matches,
+                    'match_count': len(matches),
+                    'combined_odds': round(combined_odds, 2),
+                    'slip_confidence': data.get('slip_confidence', 'HIGH'),
+                    'source': 'generated',
+                })
+
         return jsonify({
             'date': date_str,
             'matches': [],
             'match_count': 0,
-            'message': 'Could not generate picks.',
+            'message': gen_result.get('message', 'Could not generate picks.'),
         })
         
     except Exception as e:
@@ -497,17 +494,20 @@ def free_picks_by_date(date_str):
             print(f"⚡ Serving cached /api/free-picks/{date_str}")
             return jsonify(cached)
 
-        if not doc.exists:
-            # Trigger generation
-            fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
-            if fixtures:
-                from services.generator import generate_and_store
-                generate_and_store(
-                    fixtures, predictor, stats_calculator, af_stats,
-                    af_proxy=af_proxy,
-                    date_str=date_str,
-                )
-                doc = db.collection('daily_predictions').document(date_str).get()
+        # Always fetch fixtures — needed for build_parlay_slip below
+        fixtures = fetch_fixtures_by_date(date_str) if date_str else fetch_todays_fixtures()
+
+        db = get_firestore_client()
+        doc = db.collection('daily_predictions').document(date_str).get()
+
+        if (not doc.exists or not doc.to_dict().get('matches')) and fixtures:
+            from services.generator import generate_and_store
+            generate_and_store(
+                fixtures, predictor, stats_calculator, af_stats,
+                sm_proxy=af_proxy,
+                date_str=date_str,
+            )
+            doc = db.collection('daily_predictions').document(date_str).get()
 
         if not doc.exists:
             return jsonify({
@@ -565,6 +565,9 @@ def free_picks_by_date(date_str):
             for m in lst:
                 odds *= float(m.get('odds', 1.0))
             return odds
+
+        free_matches = result.get('slip', {}).get('matches', [])
+        all_matches = result.get('all_predictions', [])
 
         # Cap: remove highest-odds pick until combined ≤ max
         while len(free_matches) > 1 and calc_combined(free_matches) > MAX_FREE_COMBINED:

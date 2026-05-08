@@ -41,7 +41,7 @@ def generate_and_store(
     Returns:
         dict with keys: status, date, match_count, combined_odds, message
     """
-    from utils.sportmonks_stats import clear_cache
+    from utils.apifootball_stats import clear_cache
     from utils.fixture_fetcher import build_parlay_slip
     from utils.market_tracker import get_market_penalties
 
@@ -75,7 +75,7 @@ def generate_and_store(
         num_matches=num_matches,
         min_odds=min_odds,
         max_odds=max_odds,
-        sm_stats=sm_stats,
+        af_stats=sm_stats,
         free_mode=False,
         market_penalties=market_penalties,
     )

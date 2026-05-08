@@ -131,8 +131,8 @@ def generate_ai_pro_picks(
     Returns:
         dict with keys: status, date, tips, tip_count, combined_odds, confidence
     """
-    from utils.fixture_fetcher import generate_match_options, slip_confidence
-    from utils.sportmonks_stats import clear_cache
+    from utils.fixture_fetcher import _generate_match_options as generate_match_options, _slip_confidence as slip_confidence
+    from utils.apifootball_stats import clear_cache
 
     target_date = date_str if date_str else datetime.utcnow().strftime('%Y-%m-%d')
 
@@ -151,7 +151,7 @@ def generate_ai_pro_picks(
 
     # Generate all market options using the full AI + stat qualification pipeline
     all_options = generate_match_options(
-        fixtures, predictor, stats_calculator, sm_stats, free_mode=False
+        fixtures, predictor, stats_calculator, af_stats=sm_stats, free_mode=False
     )
 
     print(f"🧠 AI Pro Generator: {len(all_options)} total options before filtering")
