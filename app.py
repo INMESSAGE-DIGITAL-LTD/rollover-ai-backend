@@ -445,7 +445,7 @@ def ai_pro_picks_by_date(date_str):
 
         result = generate_ai_pro_picks(
             fixtures, predictor, stats_calculator, af_stats,
-            af_proxy=af_proxy,
+            sm_proxy=af_proxy,
             date_str=date_str,
             market_penalties=_ai_pro_mp,
         )
@@ -761,7 +761,7 @@ def generate_daily():
             fixtures = fetch_todays_fixtures()
             result = generate_and_store(
                 fixtures, predictor, stats_calculator, af_stats,
-                af_proxy=af_proxy,
+                sm_proxy=af_proxy,
             )
             print(f"✅ Background generation done: {result.get('message', '')}")
         except Exception as e:
@@ -837,7 +837,7 @@ def regenerate_picks():
                 from services.ai_pro_generator import generate_ai_pro_picks
                 result = generate_ai_pro_picks(
                     fixtures, predictor, stats_calculator, af_stats,
-                    af_proxy=af_proxy,
+                    sm_proxy=af_proxy,
                     date_str=date_str,
                     market_penalties=market_penalties,
                 )
@@ -875,7 +875,7 @@ def regenerate_picks():
                 from services.generator import generate_and_store
                 result = generate_and_store(
                     fixtures, predictor, stats_calculator, af_stats,
-                    af_proxy=af_proxy,
+                    sm_proxy=af_proxy,
                     date_str=date_str,
                 )
                 results['free'] = result.get('status', 'unknown')
