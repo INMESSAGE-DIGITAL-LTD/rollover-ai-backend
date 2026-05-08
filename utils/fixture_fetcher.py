@@ -523,6 +523,7 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             except Exception as e:
                 print(f"⚠️ Standings error for {home} vs {away}: {e}")
 
+        league_tendency = None  # placeholder for future league-specific adjustments
         primary_line = next(iter(fix['lines'].values()), {})
         if home_live and away_live:
             features = _build_features_from_live(
