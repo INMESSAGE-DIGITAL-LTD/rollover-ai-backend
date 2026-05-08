@@ -1,0 +1,1 @@
+{!! get_option('privacy_policy') !!}

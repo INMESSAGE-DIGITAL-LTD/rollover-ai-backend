@@ -186,35 +186,48 @@ def get_market_penalties(proxy, lookback_days=7, min_picks=3):
             print(f"  ⚠️ MarketTracker: error for {date_str}: {e}")
             continue
 
-    # ── Calculate penalty multipliers ──────────────────────────────────────
+    # ── Calculate penalty/boost multipliers ─────────────────────────────────
+    # STRATEGY: Aggressively penalize losing markets AND aggressively boost
+    # winning markets. The goal is to FOCUS on what's working, not just
+    # avoid what's failing.
     penalties = {}
     for market, stats in market_stats.items():
         total = stats['wins'] + stats['losses']
         if total < min_picks:
-            continue  # Not enough data — don't penalise
+            continue  # Not enough data — don't adjust
 
         win_rate = stats['wins'] / total
 
         if win_rate < 0.30:
-            # Very poor (< 30%): aggressive penalty — strongly avoid this market
-            penalties[market] = 0.40
-            print(f"  🔴 {market}: {win_rate:.0%} win rate ({total} picks) → penalty ×0.40")
-        elif win_rate < 0.50:
-            # Below average (30–50%): moderate penalty
-            penalties[market] = 0.65
-            print(f"  🟠 {market}: {win_rate:.0%} win rate ({total} picks) → penalty ×0.65")
-        elif win_rate < 0.60:
-            # Slightly below (50–60%): mild penalty
-            penalties[market] = 0.85
-            print(f"  🟡 {market}: {win_rate:.0%} win rate ({total} picks) → penalty ×0.85")
-        elif win_rate >= 0.75:
-            # Great performance: small composite bonus
-            bonus = min(1.15, 1.0 + (win_rate - 0.75) * 0.60)
+            # Very poor (< 30%): block this market almost entirely
+            penalties[market] = 0.20
+            print(f"  🔴 {market}: {win_rate:.0%} win rate ({total} picks) → penalty ×0.20")
+        elif win_rate < 0.45:
+            # Poor (30–45%): strong penalty
+            penalties[market] = 0.50
+            print(f"  🟠 {market}: {win_rate:.0%} win rate ({total} picks) → penalty ×0.50")
+        elif win_rate < 0.55:
+            # Below average (45–55%): moderate penalty
+            penalties[market] = 0.75
+            print(f"  🟡 {market}: {win_rate:.0%} win rate ({total} picks) → penalty ×0.75")
+        elif win_rate >= 0.80:
+            # Excellent (80%+): strong boost — FOCUS on this market
+            bonus = min(1.35, 1.0 + (win_rate - 0.80) * 1.75)
             penalties[market] = bonus
-            print(f"  🟢 {market}: {win_rate:.0%} win rate ({total} picks) → bonus ×{bonus:.2f}")
-        # 60–74%: no modifier (leave at 1.0)
+            print(f"  🟢 {market}: {win_rate:.0%} win rate ({total} picks) → BOOST ×{bonus:.2f}")
+        elif win_rate >= 0.70:
+            # Good (70-80%): significant boost
+            bonus = min(1.25, 1.0 + (win_rate - 0.70) * 1.50)
+            penalties[market] = bonus
+            print(f"  🟢 {market}: {win_rate:.0%} win rate ({total} picks) → boost ×{bonus:.2f}")
+        elif win_rate >= 0.60:
+            # Decent (60-70%): small boost — reward consistency
+            bonus = min(1.12, 1.0 + (win_rate - 0.60) * 1.20)
+            penalties[market] = bonus
+            print(f"  🟢 {market}: {win_rate:.0%} win rate ({total} picks) → boost ×{bonus:.2f}")
+        # 55–60%: no modifier (neutral zone)
 
     if not penalties:
-        print("  ℹ️ MarketTracker: insufficient historical data — no penalties applied")
+        print("  ℹ️ MarketTracker: insufficient historical data — no adjustments applied")
 
     return penalties

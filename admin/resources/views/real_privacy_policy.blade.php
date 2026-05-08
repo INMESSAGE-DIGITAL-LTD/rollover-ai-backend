@@ -1,0 +1,1 @@
+{!! get_option('real_app_privacy_policy') !!}

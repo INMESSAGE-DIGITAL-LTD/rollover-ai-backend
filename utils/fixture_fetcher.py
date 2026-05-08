@@ -562,8 +562,24 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
                 return
             actual_key = ai_market_key
             if actual_key not in ai_pred:
-                actual_key = AI_MARKET_FALLBACK.get(ai_market_key, ai_market_key)
+                return  # No trained model for this market — don't guess
             raw_ai_prob = float(ai_pred.get(actual_key, 0.5))
+
+            # Apply league-specific tendency adjustments
+            lab = market_label.lower()
+            if league_tendency:
+                if 'over' in lab and 'goal' in lab:
+                    raw_ai_prob *= league_tendency.get('over_boost', 1.0)
+                    raw_ai_prob *= league_tendency.get('over_dampen', 1.0)
+                if 'under' in lab and 'goal' in lab:
+                    raw_ai_prob *= league_tendency.get('under_boost', 1.0)
+                    raw_ai_prob *= league_tendency.get('under_dampen', 1.0)
+                if lab in ('home win', 'away win', 'draw'):
+                    raw_ai_prob *= league_tendency.get('result_dampen', 1.0)
+                if lab == 'home win':
+                    raw_ai_prob *= league_tendency.get('home_boost', 1.0)
+                raw_ai_prob = min(0.97, raw_ai_prob)
+
             qual = qualify_and_score(
                 market_label, odds, raw_ai_prob,
                 home_live, away_live, h2h_data,
