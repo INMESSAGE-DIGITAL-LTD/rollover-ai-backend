@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from datetime import datetime, timedelta
-from utils.fixture_fetcher import fetch_fixtures_by_date, fetch_fixtures_for_rollover
+from utils.fixture_fetcher import fetch_fixtures_by_date
 from utils.apifootball_stats import ApiFootballStats
 from utils.apifootball_proxy import ApiFootballProxy
 from models.multi_market_predictor import MultiMarketPredictor
@@ -57,18 +57,17 @@ def main():
 
     print(f"🎉 AI Pro generation complete: {result['message']}")
 
-    # Step 3: Generate Rollover picks (safety-first, all leagues, separate Firestore doc)
+    # Step 3: Generate Rollover picks — reuse same fixtures, no extra API calls
     try:
         from services.rollover_generator import generate_rollover_picks
         from utils.market_tracker import get_market_penalties as _get_cron_mp
-        rollover_fixtures = fetch_fixtures_for_rollover(target_str)
         _cron_mp = {}
         try:
             _cron_mp = _get_cron_mp(af_proxy, lookback_days=7, min_picks=3)
         except Exception:
             pass
         rollover_result = generate_rollover_picks(
-            rollover_fixtures, predictor, stats_calculator, af_stats,
+            fixtures, predictor, stats_calculator, af_stats,
             sm_proxy=af_proxy,
             date_str=target_str,
             market_penalties=_cron_mp,

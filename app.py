@@ -220,7 +220,28 @@ def get_daily_picks(date_str):
                     'slip_confidence': data.get('slip_confidence', 'HIGH'),
                     'source': 'firestore',
                 })
-        
+
+            # Doc exists but empty — throttle retries to once per 2 hours.
+            # Prevents hammering the API when quota is exhausted or fixtures unavailable.
+            from datetime import datetime as dt, timezone
+            last_attempt = data.get('generated_at') or data.get('saved_at')
+            if last_attempt:
+                try:
+                    if hasattr(last_attempt, 'timestamp'):
+                        age_seconds = (dt.now(timezone.utc) - last_attempt).total_seconds()
+                    else:
+                        age_seconds = 0
+                    if age_seconds < 7200:  # 2 hours
+                        print(f"⏳ Empty doc for {date_str} tried {int(age_seconds/60)}m ago — skipping retry")
+                        return jsonify({
+                            'date': date_str,
+                            'matches': [],
+                            'match_count': 0,
+                            'message': 'Predictions not yet available. Please check back later.',
+                        })
+                except Exception:
+                    pass
+
         # ─── 2. Slow path: generate and store ───
         print(f"⚠️ No Firestore doc for {date_str}, generating on-demand...")
         
