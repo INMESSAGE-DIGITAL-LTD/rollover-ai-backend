@@ -986,7 +986,8 @@ def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_
             if penalty != 1.0:
                 opt['composite_score'] = opt.get('composite_score', 0) * penalty
 
-    filtered.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
+    import math
+    filtered.sort(key=lambda x: x.get('composite_score', 0) * math.log(max(x['odds'], 1.01)), reverse=True)
 
     slip_matches = []
     combined_odds = 1.0
