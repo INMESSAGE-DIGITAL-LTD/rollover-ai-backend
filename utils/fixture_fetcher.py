@@ -567,7 +567,7 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             except Exception as e:
                 print(f"⚠️ Live stats error for {home} vs {away}: {e}")
 
-        if league_id and home_id and away_id:
+        if live_stats and league_id and home_id and away_id:
             try:
                 home_standing = get_team_standing(league_id, home_id, season)
                 away_standing = get_team_standing(league_id, away_id, season)

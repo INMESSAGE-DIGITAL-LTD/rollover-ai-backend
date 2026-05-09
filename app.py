@@ -249,6 +249,15 @@ def get_daily_picks(date_str):
         fixtures = fetch_fixtures_by_date(date_str, no_league_filter=True) if date_str else fetch_todays_fixtures()
 
         if not fixtures:
+            # Write placeholder so throttle prevents hammering quota on next request
+            try:
+                from google.cloud.firestore_v1 import SERVER_TIMESTAMP
+                db.collection('daily_predictions').document(date_str).set({
+                    'date': date_str, 'matches': [], 'match_count': 0,
+                    'generated_at': SERVER_TIMESTAMP, 'status': 'no_fixtures',
+                })
+            except Exception:
+                pass
             return jsonify({
                 'date': date_str,
                 'matches': [],

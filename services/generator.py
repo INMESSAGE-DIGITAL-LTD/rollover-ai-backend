@@ -48,6 +48,15 @@ def generate_and_store(
     today_str = date_str if date_str else datetime.utcnow().strftime('%Y-%m-%d')
 
     if not fixtures:
+        # Write placeholder so on-demand throttle can prevent repeated quota drain
+        try:
+            db = get_firestore_client()
+            db.collection('daily_predictions').document(today_str).set({
+                'date': today_str, 'matches': [], 'match_count': 0,
+                'generated_at': SERVER_TIMESTAMP, 'status': 'no_fixtures',
+            })
+        except Exception:
+            pass
         return {
             'status': 'no_fixtures',
             'date': today_str,
@@ -84,6 +93,16 @@ def generate_and_store(
     matches = slip.get('matches', [])
 
     if not matches:
+        # Write placeholder so on-demand throttle can prevent repeated quota drain
+        try:
+            db = get_firestore_client()
+            db.collection('daily_predictions').document(today_str).set({
+                'date': today_str, 'matches': [], 'match_count': 0,
+                'total_fixtures_analyzed': result.get('total_fixtures_analyzed', 0),
+                'generated_at': SERVER_TIMESTAMP, 'status': 'no_matches',
+            })
+        except Exception:
+            pass
         return {
             'status': 'no_matches',
             'date': today_str,
