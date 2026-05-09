@@ -928,6 +928,34 @@ def regenerate_picks():
     }), 202
 
 
+@app.route('/api/debug-picks/<date_str>', methods=['GET'])
+def debug_picks(date_str):
+    """Temporary debug: show raw build_parlay_slip output. Protected by CRON_SECRET."""
+    import os
+    auth = request.headers.get('Authorization', '')
+    if auth != f'Bearer {os.environ.get("CRON_SECRET", "")}':
+        return jsonify({'error': 'Unauthorized'}), 401
+    from utils.fixture_fetcher import fetch_fixtures_by_date, build_parlay_slip
+    from utils.apifootball_stats import clear_cache
+    clear_cache()
+    fixtures = fetch_fixtures_by_date(date_str, no_league_filter=True)
+    result = build_parlay_slip(
+        fixtures, predictor, stats_calculator,
+        num_matches=10, min_odds=1.10, max_odds=2.00,
+        af_stats=None, free_mode=False,
+    )
+    slip = result.get('slip', {})
+    return jsonify({
+        'total_fixtures': len(fixtures),
+        'match_count': slip.get('match_count', 0),
+        'combined_odds': slip.get('combined_odds', 0),
+        'matches': [
+            {'market': m['market'], 'odds': m['odds'], 'match': m['match']}
+            for m in slip.get('matches', [])
+        ],
+    })
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port, debug=True)
