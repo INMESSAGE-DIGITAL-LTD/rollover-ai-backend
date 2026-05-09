@@ -302,7 +302,18 @@ def _parse_fixture(item, bookmakers=None, prediction=None, injuries=None, fixtur
                 lines, markets = derive_market_odds(prediction)
                 odds_source = 'prediction'
             else:
-                return None  # No odds and no prediction → skip
+                # No bookmaker odds and no prediction (e.g. odds API quota exhausted).
+                # Use conservative default odds so XGBoost can still evaluate the fixture.
+                lines = {
+                    1.5: {'over_odds': 1.44, 'under_odds': 2.60},
+                    2.5: {'over_odds': 1.90, 'under_odds': 1.95},
+                }
+                markets = {
+                    'fulltime_result': {'home': 2.20, 'draw': 3.30, 'away': 3.20},
+                    'double_chance': {'home_draw': 1.35, 'away_draw': 1.50, 'home_away': 1.40},
+                    'btts': {'yes': 1.80, 'no': 2.00},
+                }
+                odds_source = 'default'
 
         return {
             'home_team':     home.get('name', ''),
