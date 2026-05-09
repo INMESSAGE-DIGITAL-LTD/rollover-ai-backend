@@ -19,7 +19,7 @@ def generate_and_store(
     sm_stats,
     *,
     num_matches=7,
-    min_odds=1.35,
+    min_odds=1.20,
     max_odds=2.20,
     save_sqlite_fn=None,
     sm_proxy=None,
