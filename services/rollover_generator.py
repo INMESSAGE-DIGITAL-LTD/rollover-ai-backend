@@ -46,11 +46,12 @@ ROLLOVER_MIN_COMPOSITE = {
 # Minimum edge required for rollover picks (model_prob - implied_prob)
 ROLLOVER_MIN_EDGE = 0.04
 
-# Max single-pick odds for Rollover — lower = safer
-ROLLOVER_MAX_SINGLE_ODDS = 1.45
+# Min/Max single-pick odds for Rollover
+ROLLOVER_MIN_SINGLE_ODDS = 1.20
+ROLLOVER_MAX_SINGLE_ODDS = 1.60
 
 # Max combined odds for the entire slip (2 picks)
-ROLLOVER_MAX_COMBINED_ODDS = 2.00
+ROLLOVER_MAX_COMBINED_ODDS = 2.50
 
 # Exactly 2 picks — the 2 surest bets
 ROLLOVER_MAX_PICKS = 2
@@ -121,7 +122,7 @@ def generate_rollover_picks(
         and o['ai_prob'] >= ROLLOVER_MIN_PROB.get(o['market'], 0.78)
         and o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.50)
         and o.get('edge', 0) >= ROLLOVER_MIN_EDGE
-        and o['odds'] >= 1.05
+        and o['odds'] >= ROLLOVER_MIN_SINGLE_ODDS
         and o['odds'] <= ROLLOVER_MAX_SINGLE_ODDS
     ]
 
@@ -147,8 +148,9 @@ def generate_rollover_picks(
             'message': 'No qualifying picks met rollover safety standards today.',
         }
 
-    # Sort by composite_score descending (most confident first)
-    safe_options.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
+    # Sort by value score: composite_score × log(odds) — rewards confidence AND good odds
+    import math
+    safe_options.sort(key=lambda x: x.get('composite_score', 0) * math.log(max(x['odds'], 1.01)), reverse=True)
 
     # ── Select the 2 surest bets: one pick per match, market diversity ────────
     slip_matches = []

@@ -53,16 +53,16 @@ AI_PRO_MIN_COMPOSITE = {
 # Minimum edge required (model_prob - implied_prob)
 AI_PRO_MIN_EDGE = 0.05
 
-# Odds limits per pick — allows up to 1.50 for slightly more variety
-AI_PRO_MIN_ODDS = 1.10
-AI_PRO_MAX_ODDS = 1.50
+# Odds limits per pick — raised floor to exclude low-value DC picks
+AI_PRO_MIN_ODDS = 1.40
+AI_PRO_MAX_ODDS = 2.50
 
 # Max picks per day — dynamic 1-3 based on what qualifies
 AI_PRO_MAX_PICKS = 3
 
-# Combined odds range — user wants "2 odds or less" so cap at 2.50
-AI_PRO_MIN_COMBINED_ODDS = 1.80
-AI_PRO_MAX_COMBINED_ODDS = 2.50
+# Combined odds range
+AI_PRO_MIN_COMBINED_ODDS = 2.00
+AI_PRO_MAX_COMBINED_ODDS = 5.00
 
 # Max 1 pick of the same market type (force full diversity)
 AI_PRO_MAX_SAME_MARKET = 1
@@ -190,8 +190,9 @@ def generate_ai_pro_picks(
             'message': 'No picks met AI Pro quality standards today.',
         }
 
-    # Sort by composite_score descending
-    qualified.sort(key=lambda x: x.get('composite_score', 0), reverse=True)
+    # Sort by value score: composite_score × log(odds) — rewards high confidence AND good odds
+    import math
+    qualified.sort(key=lambda x: x.get('composite_score', 0) * math.log(max(x['odds'], 1.01)), reverse=True)
 
     # ── Select tips: one per match, dynamic count, market diversity ───────────
     selected = []

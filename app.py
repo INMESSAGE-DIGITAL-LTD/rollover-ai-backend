@@ -278,8 +278,8 @@ def get_daily_picks(date_str):
         gen_result = generate_and_store(
             fixtures, predictor, stats_calculator, af_stats,
             num_matches=10,
-            min_odds=1.10,
-            max_odds=1.57,
+            min_odds=1.35,
+            max_odds=2.20,
             sm_proxy=af_proxy,
             date_str=date_str,
         )
@@ -577,8 +577,8 @@ def free_picks_by_date(date_str):
         result = build_parlay_slip(
             fixtures, predictor, stats_calculator,
             num_matches=6,
-            min_odds=1.10,
-            max_odds=1.57,
+            min_odds=1.35,
+            max_odds=2.20,
             af_stats=None,  # disabled: saves ~1000 API calls/run
             free_mode=False,  # Use strict safety rules
             exclude_match_markets=exclude_match_markets,
