@@ -712,7 +712,9 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
 
         # === Over/Under lines ===
         for point, line_data in fix['lines'].items():
-            odds = line_data['over_odds']
+            odds = line_data.get('over_odds') or line_data.get('over')
+            if not odds:
+                continue
             ai_market = LINE_TO_AI_MARKET.get(point, 'ft_over_15')
             label = LINE_LABELS.get(point, f'Over {point} Goals')
             _try_add(label, odds, ai_market, line=point)
