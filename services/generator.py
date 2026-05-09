@@ -110,27 +110,29 @@ def generate_and_store(
             'message': 'AI could not generate matches for today.',
         }
 
-    # ── Enforce combined odds ranges per tab ──────────────────────────────
-    # AI Pro = first 3 picks → combined 1.70–2.20, single pick 1.10–1.30
-    # Free   = next 4 picks  → combined 1.40–1.80
-    ai_pro = matches[:3]
-    free   = matches[3:7]
+    # ── Cap to num_matches, write all qualifying picks directly ──────────────
+    # No AI Pro/Free split here — Free tab gets the top picks by value score.
+    # Combined odds cap: if combined > 15.0 (too exotic), drop the highest-odds
+    # pick until it's within range or only 1 pick remains.
+    while len(matches) > 1:
+        combined = 1.0
+        for m in matches:
+            combined *= float(m.get('odds', 1.0))
+        if combined <= 15.0:
+            break
+        matches = sorted(matches, key=lambda m: float(m.get('odds', 1.0)), reverse=True)
+        matches.pop(0)
 
-    ai_pro = _enforce_combined_odds(ai_pro, min_combined=1.70, max_combined=2.20, all_pool=matches, max_count=3)
-    free   = _enforce_combined_odds(free, min_combined=1.40, max_combined=1.80, all_pool=matches, exclude=ai_pro, max_count=4)
-
-    matches = ai_pro + free
+    matches = matches[:num_matches]
     slip['matches'] = matches
     slip['match_count'] = len(matches)
 
-    # Recalculate overall combined odds
     overall = 1.0
     for m in matches:
         overall *= float(m.get('odds', 1.0))
     slip['combined_odds'] = round(overall, 2)
 
-    print(f"✅ Generator: {len(matches)} matches (AI Pro: {len(ai_pro)}, Free: {len(free)}), "
-          f"AI Pro odds: {round(_calc_combined(ai_pro), 2)}, Free odds: {round(_calc_combined(free), 2)}")
+    print(f"✅ Generator: {len(matches)} matches, combined odds {slip['combined_odds']}")
 
     # Write to Firestore
     db = get_firestore_client()
