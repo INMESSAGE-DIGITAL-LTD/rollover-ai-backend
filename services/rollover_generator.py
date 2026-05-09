@@ -109,7 +109,7 @@ def generate_rollover_picks(
 
     # Generate all market options using the full AI + stat qualification pipeline
     all_options = generate_match_options(
-        fixtures, predictor, stats_calculator, af_stats=sm_stats, free_mode=False
+        fixtures, predictor, stats_calculator, af_stats=None, free_mode=False
     )
 
     print(f"🛡️ Rollover Generator: {len(all_options)} total options before safety filter")

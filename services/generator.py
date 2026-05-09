@@ -75,8 +75,8 @@ def generate_and_store(
         num_matches=num_matches,
         min_odds=min_odds,
         max_odds=max_odds,
-        af_stats=sm_stats,
-        free_mode=False,
+        af_stats=None,   # Disable live team stats API calls (saves ~1000 calls/run)
+        free_mode=False, # CSV stats + AF predictions are sufficient for qualification
         market_penalties=market_penalties,
     )
 

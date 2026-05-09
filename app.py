@@ -176,7 +176,7 @@ def get_parlay():
             num_matches=num_matches,
             min_odds=min_odds,
             max_odds=max_odds,
-            af_stats=af_stats,
+            af_stats=None,  # disabled: saves ~1000 API calls/run
         )
         return jsonify(result)
     except Exception as e:
@@ -570,7 +570,7 @@ def free_picks_by_date(date_str):
             num_matches=6,
             min_odds=1.10,
             max_odds=1.57,
-            af_stats=af_stats,
+            af_stats=None,  # disabled: saves ~1000 API calls/run
             free_mode=False,  # Use strict safety rules
             exclude_match_markets=exclude_match_markets,
             market_penalties=_free_mp,
@@ -633,7 +633,7 @@ def ai_parlay():
             num_matches=num_matches,
             min_odds=min_odds,
             max_odds=max_odds,
-            af_stats=af_stats,
+            af_stats=None,  # disabled: saves ~1000 API calls/run
         )
         return jsonify(result)
     except Exception as e:
