@@ -152,94 +152,58 @@ def _names_match(a, b):
     return False
 
 
-# ── Direct SportMonks API call (bypasses proxy cache) ──
+# ── API-Football direct call for scores ──
 
-FINISHED_STATE_IDS = {5, 7, 8, 10, 11, 12, 14, 15, 17, 18}
+APIFOOTBALL_KEY = os.environ.get('APIFOOTBALL_KEY', 'da7a6fc2f03e7fb7994995143d29358f')
+APIFOOTBALL_BASE = 'https://v3.football.api-sports.io'
 
 
 def _fetch_fixtures_direct(date_str):
-    """Fetch fixtures with scores directly from SportMonks API.
-    Bypasses the in-memory proxy cache to ensure fresh score data."""
+    """Fetch finished fixtures with scores from API-Football."""
     fixtures = []
-    page = 1
-    while page <= 5:
-        url = (
-            f"{SPORTMONKS_BASE}/fixtures/date/{date_str}"
-            f"?api_token={SPORTMONKS_TOKEN}"
-            f"&include=participants;scores"
-            f"&per_page=100"
-        )
-        if page > 1:
-            url += f"&page={page}"
-        try:
-            req = urllib.request.Request(url)
-            with urllib.request.urlopen(req, timeout=20) as resp:
-                body = json.loads(resp.read().decode())
-        except Exception as e:
-            print(f"  ⚠️ SportMonks API error (page {page}): {e}")
-            break
+    url = f"{APIFOOTBALL_BASE}/fixtures?date={date_str}&timezone=UTC"
+    try:
+        req = urllib.request.Request(url, headers={'x-apisports-key': APIFOOTBALL_KEY})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"  ⚠️ API-Football error fetching scores for {date_str}: {e}")
+        return {'fixtures': []}
 
-        for event in body.get('data', []):
-            state_id = event.get('state_id', 0)
-            if state_id not in FINISHED_STATE_IDS:
-                continue  # Skip non-finished games
+    for event in body.get('response', []):
+        status = (event.get('fixture') or {}).get('status', {})
+        short = status.get('short', '')
+        if short not in ('FT', 'AET', 'PEN'):
+            continue  # Only finished games
 
-            participants = event.get('participants', [])
-            home_name = away_name = ''
-            for p in participants:
-                loc = (p.get('meta') or {}).get('location', '')
-                if loc == 'home':
-                    home_name = p.get('name', '')
-                elif loc == 'away':
-                    away_name = p.get('name', '')
+        teams = event.get('teams', {})
+        home_name = (teams.get('home') or {}).get('name', '')
+        away_name = (teams.get('away') or {}).get('name', '')
+        if not home_name or not away_name:
+            continue
 
-            if not home_name or not away_name:
-                continue
+        goals = event.get('goals', {})
+        score = event.get('score', {})
+        home_score = goals.get('home')
+        away_score = goals.get('away')
+        ht = score.get('halftime', {})
+        ht_home = ht.get('home')
+        ht_away = ht.get('away')
 
-            # Parse scores
-            home_score = away_score = None
-            ht_home = ht_away = None
-            score_priority = {'CURRENT': 0, '2ND_HALF': 1, 'FULLTIME': 2}
-            best = {}
-            for s in event.get('scores', []):
-                desc = s.get('description', '')
-                sd = s.get('score', {})
-                participant = sd.get('participant', '')
-                goals = sd.get('goals')
-                if goals is None:
-                    continue
-                g = int(goals)
-                if desc == '1ST_HALF':
-                    if participant == 'home': ht_home = g
-                    elif participant == 'away': ht_away = g
-                    continue
-                if desc not in score_priority:
-                    continue
-                prio = score_priority[desc]
-                if participant not in best or prio < best[participant]:
-                    if participant == 'home': home_score = g
-                    elif participant == 'away': away_score = g
-                    best[participant] = prio
+        if home_score is None or away_score is None:
+            continue
 
-            fixtures.append({
-                'home_team': home_name,
-                'away_team': away_name,
-                'home_score': home_score,
-                'away_score': away_score,
-                'ht_home_score': ht_home,
-                'ht_away_score': ht_away,
-                'match_status': 'FT',
-            })
+        fixtures.append({
+            'home_team': home_name,
+            'away_team': away_name,
+            'home_score': int(home_score),
+            'away_score': int(away_score),
+            'ht_home_score': int(ht_home) if ht_home is not None else None,
+            'ht_away_score': int(ht_away) if ht_away is not None else None,
+            'match_status': 'FT',
+        })
 
-        pagination = body.get('pagination', {})
-        has_more = pagination.get('has_more') or (
-            pagination.get('current_page', page) < pagination.get('last_page', page)
-        )
-        if not has_more:
-            break
-        page += 1
-
-    print(f"  📡 Direct API: {len(fixtures)} finished fixtures for {date_str}")
+    print(f"  📡 API-Football: {len(fixtures)} finished fixtures for {date_str}")
     return {'fixtures': fixtures}
 
 
