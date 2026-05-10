@@ -149,6 +149,11 @@ def _names_match(a, b):
     tokens_b = {w for w in nb.split() if len(w) >= 4}
     if tokens_a and tokens_b and len(tokens_a & tokens_b) >= 1:
         return True
+    # Short 3-char tokens (e.g. "aek", "ael", "psv", "cfr")
+    tokens_a3 = {w for w in na.split() if len(w) == 3}
+    tokens_b3 = {w for w in nb.split() if len(w) == 3}
+    if tokens_a3 and tokens_b3 and len(tokens_a3 & tokens_b3) >= 1:
+        return True
     return False
 
 
@@ -159,51 +164,61 @@ APIFOOTBALL_BASE = 'https://v3.football.api-sports.io'
 
 
 def _fetch_fixtures_direct(date_str):
-    """Fetch finished fixtures with scores from API-Football."""
+    """Fetch finished fixtures with scores from API-Football (all pages)."""
     fixtures = []
-    url = f"{APIFOOTBALL_BASE}/fixtures?date={date_str}&timezone=UTC"
-    try:
-        req = urllib.request.Request(url, headers={'x-apisports-key': APIFOOTBALL_KEY})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            body = json.loads(resp.read().decode())
-    except Exception as e:
-        print(f"  ⚠️ API-Football error fetching scores for {date_str}: {e}")
-        return {'fixtures': []}
+    page = 1
+    while True:
+        url = f"{APIFOOTBALL_BASE}/fixtures?date={date_str}&timezone=UTC&page={page}"
+        try:
+            req = urllib.request.Request(url, headers={'x-apisports-key': APIFOOTBALL_KEY})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                body = json.loads(resp.read().decode())
+        except Exception as e:
+            print(f"  ⚠️ API-Football error fetching scores for {date_str} p{page}: {e}")
+            break
 
-    for event in body.get('response', []):
-        status = (event.get('fixture') or {}).get('status', {})
-        short = status.get('short', '')
-        if short not in ('FT', 'AET', 'PEN'):
-            continue  # Only finished games
+        for event in body.get('response', []):
+            status = (event.get('fixture') or {}).get('status', {})
+            short = status.get('short', '')
+            if short not in ('FT', 'AET', 'PEN'):
+                continue
 
-        teams = event.get('teams', {})
-        home_name = (teams.get('home') or {}).get('name', '')
-        away_name = (teams.get('away') or {}).get('name', '')
-        if not home_name or not away_name:
-            continue
+            teams = event.get('teams', {})
+            home_name = (teams.get('home') or {}).get('name', '')
+            away_name = (teams.get('away') or {}).get('name', '')
+            if not home_name or not away_name:
+                continue
 
-        goals = event.get('goals', {})
-        score = event.get('score', {})
-        home_score = goals.get('home')
-        away_score = goals.get('away')
-        ht = score.get('halftime', {})
-        ht_home = ht.get('home')
-        ht_away = ht.get('away')
+            goals = event.get('goals', {})
+            score = event.get('score', {})
+            home_score = goals.get('home')
+            away_score = goals.get('away')
+            ht = score.get('halftime', {})
+            ht_home = ht.get('home')
+            ht_away = ht.get('away')
 
-        if home_score is None or away_score is None:
-            continue
+            if home_score is None or away_score is None:
+                continue
 
-        fixtures.append({
-            'home_team': home_name,
-            'away_team': away_name,
-            'home_score': int(home_score),
-            'away_score': int(away_score),
-            'ht_home_score': int(ht_home) if ht_home is not None else None,
-            'ht_away_score': int(ht_away) if ht_away is not None else None,
-            'match_status': 'FT',
-        })
+            fixtures.append({
+                'home_team': home_name,
+                'away_team': away_name,
+                'home_score': int(home_score),
+                'away_score': int(away_score),
+                'ht_home_score': int(ht_home) if ht_home is not None else None,
+                'ht_away_score': int(ht_away) if ht_away is not None else None,
+                'match_status': 'FT',
+            })
 
-    print(f"  📡 API-Football: {len(fixtures)} finished fixtures for {date_str}")
+        # Check if there are more pages
+        paging = body.get('paging', {})
+        current = paging.get('current', 1)
+        total_pages = paging.get('total', 1)
+        if current >= total_pages:
+            break
+        page += 1
+
+    print(f"  📡 API-Football: {len(fixtures)} finished fixtures for {date_str} ({page} page(s))")
     return {'fixtures': fixtures}
 
 
@@ -212,7 +227,8 @@ def _find_score(fixtures_data, home_team, away_team):
     if not fixtures_data:
         return None, None, None, None
 
-    for fix in fixtures_data.get('fixtures', []):
+    fixtures = fixtures_data.get('fixtures', [])
+    for fix in fixtures:
         if (_names_match(fix.get('home_team', ''), home_team) and
                 _names_match(fix.get('away_team', ''), away_team)):
             h = fix.get('home_score')
@@ -224,6 +240,10 @@ def _find_score(fixtures_data, home_team, away_team):
                     int(ht_h) if ht_h is not None else None, \
                     int(ht_a) if ht_a is not None else None
 
+    # Debug: log first 5 available names to help diagnose mismatches
+    avail = [(f.get('home_team', ''), f.get('away_team', '')) for f in fixtures[:5]]
+    print(f"    🔎 No match for '{home_team}' vs '{away_team}'. "
+          f"Available (first 5): {avail}")
     return None, None, None, None
 
 
