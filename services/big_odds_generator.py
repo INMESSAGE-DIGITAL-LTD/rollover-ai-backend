@@ -18,24 +18,41 @@ from firebase_config import get_firestore_client
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 
 
-# All mainstream markets allowed (half-time markets excluded for reliability)
+# All mainstream markets allowed — includes 1st/2nd half, team goals, BTTS
 BIG_ODDS_ALLOWED_MARKETS = {
+    # Full-time result
     'Home Win',
     'Away Win',
     'Draw',
+    # Double Chance
+    'Double Chance (1X)',
+    'Double Chance (X2)',
+    'Double Chance (12)',
+    # BTTS
     'Both Teams to Score',
     'BTTS No',
+    # Full-time Over/Under goals
+    'Over 0.5 Goals',
     'Over 1.5 Goals',
     'Over 2.5 Goals',
     'Over 3.5 Goals',
     'Over 4.5 Goals',
     'Under 2.5 Goals',
     'Under 3.5 Goals',
-    'Double Chance (1X)',
-    'Double Chance (X2)',
-    'Double Chance (12)',
+    # Team goals (Home/Away)
+    'Home Over 0.5 Goals',
     'Home Over 1.5 Goals',
+    'Home Over 2.5 Goals',
+    'Away Over 0.5 Goals',
     'Away Over 1.5 Goals',
+    'Away Over 2.5 Goals',
+    'Home to Score',
+    'Away to Score',
+    # 1st Half / 2nd Half goals
+    '1st Half Over 0.5',
+    '2nd Half Over 0.5',
+    '1st Half Under 0.5',
+    '2nd Half Under 0.5',
 }
 
 # Minimum AI probability per market — relaxed but still meaningful gates
@@ -43,19 +60,30 @@ BIG_ODDS_MIN_PROB = {
     'Home Win':                0.55,
     'Away Win':                0.50,
     'Draw':                    0.48,
+    'Double Chance (1X)':      0.65,
+    'Double Chance (X2)':      0.62,
+    'Double Chance (12)':      0.62,
     'Both Teams to Score':     0.58,
     'BTTS No':                 0.52,
+    'Over 0.5 Goals':          0.75,
     'Over 1.5 Goals':          0.65,
     'Over 2.5 Goals':          0.58,
     'Over 3.5 Goals':          0.50,
     'Over 4.5 Goals':          0.45,
     'Under 2.5 Goals':         0.55,
     'Under 3.5 Goals':         0.60,
-    'Double Chance (1X)':      0.65,
-    'Double Chance (X2)':      0.62,
-    'Double Chance (12)':      0.62,
+    'Home Over 0.5 Goals':     0.68,
     'Home Over 1.5 Goals':     0.60,
+    'Home Over 2.5 Goals':     0.50,
+    'Away Over 0.5 Goals':     0.65,
     'Away Over 1.5 Goals':     0.55,
+    'Away Over 2.5 Goals':     0.48,
+    'Home to Score':           0.68,
+    'Away to Score':           0.62,
+    '1st Half Over 0.5':       0.62,
+    '2nd Half Over 0.5':       0.62,
+    '1st Half Under 0.5':      0.55,
+    '2nd Half Under 0.5':      0.55,
 }
 
 # Minimum composite score per market
@@ -63,19 +91,30 @@ BIG_ODDS_MIN_COMPOSITE = {
     'Home Win':                0.35,
     'Away Win':                0.32,
     'Draw':                    0.30,
+    'Double Chance (1X)':      0.42,
+    'Double Chance (X2)':      0.40,
+    'Double Chance (12)':      0.40,
     'Both Teams to Score':     0.36,
     'BTTS No':                 0.33,
+    'Over 0.5 Goals':          0.48,
     'Over 1.5 Goals':          0.42,
     'Over 2.5 Goals':          0.38,
     'Over 3.5 Goals':          0.33,
     'Over 4.5 Goals':          0.28,
     'Under 2.5 Goals':         0.36,
     'Under 3.5 Goals':         0.40,
-    'Double Chance (1X)':      0.42,
-    'Double Chance (X2)':      0.40,
-    'Double Chance (12)':      0.40,
+    'Home Over 0.5 Goals':     0.42,
     'Home Over 1.5 Goals':     0.38,
+    'Home Over 2.5 Goals':     0.32,
+    'Away Over 0.5 Goals':     0.40,
     'Away Over 1.5 Goals':     0.35,
+    'Away Over 2.5 Goals':     0.30,
+    'Home to Score':           0.42,
+    'Away to Score':           0.38,
+    '1st Half Over 0.5':       0.38,
+    '2nd Half Over 0.5':       0.38,
+    '1st Half Under 0.5':      0.35,
+    '2nd Half Under 0.5':      0.35,
 }
 
 # Minimum edge over bookmaker implied probability
