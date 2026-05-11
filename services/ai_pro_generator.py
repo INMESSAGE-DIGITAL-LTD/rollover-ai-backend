@@ -3,11 +3,11 @@ AI Pro Tips generator — server-side replacement for client-side RapidAPI logic
 
 Strategy:
   - Uses the SAME XGBoost multi-market prediction pipeline as Rollover
-  - Broader market selection than Rollover: Over 1.5/2.5, Home Win, Away Win,
-    Double Chance (1X/X2)
+  - All markets supported: FT result, Double Chance, BTTS, Over/Under, team goals,
+    1st/2nd half — any market passing quality gates qualifies
   - Dynamic pick count: 1-3 tips based on what qualifies (quality over quantity)
-  - STRICT odds limits: per-pick ≤1.50, combined 1.80-2.50
-  - Real odds from SportMonks (not hardcoded estimates)
+  - Odds limits: 1.40–2.50 per pick, combined 2.00–5.00
+  - Real odds from API-Football (not hardcoded estimates)
   - Market penalties applied to avoid repeating losing patterns
   - Stores results in Firestore daily_ai_pro/{date_str}
   - Response format designed for direct consumption by Flutter app
@@ -20,34 +20,60 @@ from firebase_config import get_firestore_client
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 
 
-# Markets allowed for AI Pro — broader than Rollover but still curated
-AI_PRO_ALLOWED_MARKETS = {
-    'Over 1.5 Goals',
-    'Over 2.5 Goals',
-    'Home Win',
-    'Away Win',
-    'Double Chance (1X)',
-    'Double Chance (X2)',
-}
-
 # Minimum AI probability per market — balanced: strict enough to win, loose enough to find picks
 AI_PRO_MIN_PROB = {
-    'Over 1.5 Goals':     0.72,
-    'Over 2.5 Goals':     0.68,
-    'Home Win':           0.62,
-    'Away Win':           0.62,
-    'Double Chance (1X)': 0.74,
-    'Double Chance (X2)': 0.72,
+    'Home Win':                0.62,
+    'Away Win':                0.62,
+    'Draw':                    0.55,
+    'Double Chance (1X)':      0.74,
+    'Double Chance (X2)':      0.72,
+    'Double Chance (12)':      0.70,
+    'Both Teams to Score':     0.66,
+    'BTTS No':                 0.62,
+    'Over 1.5 Goals':          0.72,
+    'Over 2.5 Goals':          0.68,
+    'Under 2.5 Goals':         0.64,
+    'Under 3.5 Goals':         0.68,
+    'Home Over 0.5 Goals':     0.74,
+    'Home Over 1.5 Goals':     0.68,
+    'Home Over 2.5 Goals':     0.60,
+    'Away Over 0.5 Goals':     0.70,
+    'Away Over 1.5 Goals':     0.65,
+    'Away Over 2.5 Goals':     0.58,
+    'Home to Score':           0.74,
+    'Away to Score':           0.70,
+    '1st Half Over 0.5':       0.68,
+    '2nd Half Over 0.5':       0.68,
+    '1st Half Under 0.5':      0.62,
+    '2nd Half Under 0.5':      0.62,
 }
 
 # Minimum composite score per market
 AI_PRO_MIN_COMPOSITE = {
-    'Over 1.5 Goals':     0.48,
-    'Over 2.5 Goals':     0.46,
-    'Home Win':           0.46,
-    'Away Win':           0.46,
-    'Double Chance (1X)': 0.49,
-    'Double Chance (X2)': 0.48,
+    'Home Win':                0.46,
+    'Away Win':                0.46,
+    'Draw':                    0.40,
+    'Double Chance (1X)':      0.49,
+    'Double Chance (X2)':      0.48,
+    'Double Chance (12)':      0.47,
+    'Both Teams to Score':     0.46,
+    'BTTS No':                 0.44,
+    'Over 1.5 Goals':          0.48,
+    'Over 2.5 Goals':          0.46,
+    'Under 2.5 Goals':         0.45,
+    'Under 3.5 Goals':         0.47,
+    'Home Over 0.5 Goals':     0.48,
+    'Home Over 1.5 Goals':     0.46,
+    'Home Over 2.5 Goals':     0.42,
+    'Away Over 0.5 Goals':     0.46,
+    'Away Over 1.5 Goals':     0.44,
+    'Away Over 2.5 Goals':     0.40,
+    'Home to Score':           0.48,
+    'Away to Score':           0.46,
+    '1st Half Over 0.5':       0.45,
+    '2nd Half Over 0.5':       0.45,
+    '1st Half Under 0.5':      0.43,
+    '2nd Half Under 0.5':      0.43,
 }
 
 # Minimum edge required (model_prob - implied_prob)
@@ -69,12 +95,30 @@ AI_PRO_MAX_SAME_MARKET = 1
 
 # Map backend market names → Flutter app rule types
 MARKET_TO_RULE_TYPE = {
-    'Over 1.5 Goals':     'overGoals',
-    'Over 2.5 Goals':     'overGoals',
-    'Home Win':           'homeWin',
-    'Away Win':           'awayWin',
-    'Double Chance (1X)': 'doubleChance',
-    'Double Chance (X2)': 'doubleChance',
+    'Home Win':                'homeWin',
+    'Away Win':                'awayWin',
+    'Draw':                    'draw',
+    'Double Chance (1X)':      'doubleChance',
+    'Double Chance (X2)':      'doubleChance',
+    'Double Chance (12)':      'doubleChance',
+    'Both Teams to Score':     'btts',
+    'BTTS No':                 'bttsNo',
+    'Over 1.5 Goals':          'overGoals',
+    'Over 2.5 Goals':          'overGoals',
+    'Under 2.5 Goals':         'underGoals',
+    'Under 3.5 Goals':         'underGoals',
+    'Home Over 0.5 Goals':     'homeTeamGoals',
+    'Home Over 1.5 Goals':     'homeTeamGoals',
+    'Home Over 2.5 Goals':     'homeTeamGoals',
+    'Away Over 0.5 Goals':     'awayTeamGoals',
+    'Away Over 1.5 Goals':     'awayTeamGoals',
+    'Away Over 2.5 Goals':     'awayTeamGoals',
+    'Home to Score':           'homeToScore',
+    'Away to Score':           'awayToScore',
+    '1st Half Over 0.5':       'firstHalf',
+    '2nd Half Over 0.5':       'secondHalf',
+    '1st Half Under 0.5':      'firstHalf',
+    '2nd Half Under 0.5':      'secondHalf',
 }
 
 # Extract goal line from market name
@@ -156,11 +200,10 @@ def generate_ai_pro_picks(
 
     print(f"🧠 AI Pro Generator: {len(all_options)} total options before filtering")
 
-    # ── Filter: only allowed markets with strict thresholds ───────────────────
+    # ── Filter: all markets, strict quality thresholds ────────────────────────
     qualified = [
         o for o in all_options
-        if o['market'] in AI_PRO_ALLOWED_MARKETS
-        and o['ai_prob'] >= AI_PRO_MIN_PROB.get(o['market'], 0.65)
+        if o['ai_prob'] >= AI_PRO_MIN_PROB.get(o['market'], 0.65)
         and o['composite_score'] >= AI_PRO_MIN_COMPOSITE.get(o['market'], 0.46)
         and o.get('edge', 0) >= AI_PRO_MIN_EDGE
         and o['odds'] >= AI_PRO_MIN_ODDS
