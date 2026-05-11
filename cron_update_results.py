@@ -16,7 +16,7 @@ from utils.apifootball_proxy import ApiFootballProxy
 def main():
     print("🔄 Result updater cron started")
     af_proxy = ApiFootballProxy()
-    summary = update_past_results(af_proxy, days_back=3)
+    summary = update_past_results(af_proxy, days_back=4)
     print(f"✅ Done — {summary.get('updated', 0)} resolved, {summary.get('errors', 0)} void")
 
 

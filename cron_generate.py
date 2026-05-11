@@ -45,7 +45,7 @@ def main():
     # Step 1: Update results for the last 3 days before generating new picks.
     try:
         from utils.result_updater import update_past_results
-        update_past_results(af_proxy, days_back=3)
+        update_past_results(af_proxy, days_back=4)
     except Exception as e:
         print(f"⚠️ Result updater failed (non-fatal): {e}")
 
@@ -89,6 +89,34 @@ def main():
         print(f"🧠 AI Pro generation complete: {ai_pro_result['message']}")
     except Exception as e:
         print(f"⚠️ AI Pro generation failed (non-fatal): {e}")
+
+    # Step 5: Generate Big Odds picks — after all other tabs so exclusions are full
+    try:
+        from services.big_odds_generator import generate_big_odds_picks
+        from firebase_config import get_firestore_client
+        # Build exclusion set from all other tabs
+        _excluded = set()
+        _db = get_firestore_client()
+        for _col, _key in [('daily_ai_pro', 'tips'), ('daily_predictions', 'matches'), ('daily_rollover', 'matches')]:
+            try:
+                _doc = _db.collection(_col).document(target_str).get()
+                if _doc.exists:
+                    for _m in (_doc.to_dict() or {}).get(_key, []):
+                        _h, _a = _m.get('home_team', ''), _m.get('away_team', '')
+                        if _h and _a:
+                            _excluded.add(f"{_h}_{_a}")
+            except Exception:
+                pass
+        big_odds_result = generate_big_odds_picks(
+            fixtures, predictor, stats_calculator, af_stats,
+            sm_proxy=af_proxy,
+            date_str=target_str,
+            market_penalties=_cron_mp,
+            excluded_match_keys=_excluded,
+        )
+        print(f"🎯 Big Odds generation complete: {big_odds_result['message']}")
+    except Exception as e:
+        print(f"⚠️ Big Odds generation failed (non-fatal): {e}")
 
     print(f"🎉 Cron complete for {target_str}")
 

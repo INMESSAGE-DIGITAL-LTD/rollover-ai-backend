@@ -426,6 +426,105 @@ def rollover_picks_by_date(date_str):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/big-odds-picks/<date_str>')
+def big_odds_picks_by_date(date_str):
+    """
+    High-value Big Odds accumulator — 3–10 picks, combined odds 6–15.
+
+    GET /api/big-odds-picks/2026-05-11
+    """
+    from datetime import datetime as dt
+    try:
+        dt.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    try:
+        db = get_firestore_client()
+
+        # Fast path: serve cached doc from Firestore
+        doc = db.collection('daily_big_odds').document(date_str).get()
+        if doc.exists:
+            data = doc.to_dict()
+            matches = data.get('matches', [])
+            if matches:
+                combined = 1.0
+                for m in matches:
+                    combined *= float(m.get('odds', 1.0))
+                print(f"⚡ Serving Firestore Big Odds picks for {date_str} ({len(matches)} picks)")
+                return jsonify({
+                    'date': date_str,
+                    'matches': matches,
+                    'match_count': len(matches),
+                    'combined_odds': round(combined, 2),
+                    'slip_confidence': data.get('slip_confidence', 'MEDIUM'),
+                    'source': 'firestore',
+                })
+
+        # Slow path: generate on-demand
+        print(f"⚠️ No Big Odds doc for {date_str}, generating on-demand...")
+        from services.big_odds_generator import generate_big_odds_picks
+
+        fixtures = fetch_fixtures_by_date(date_str, no_league_filter=True) if date_str else fetch_todays_fixtures()
+        if not fixtures:
+            return jsonify({'date': date_str, 'matches': [], 'match_count': 0,
+                            'message': 'No fixtures available.'})
+
+        from utils.market_tracker import get_market_penalties as _get_mp
+        _mp = {}
+        try:
+            _mp = _get_mp(af_proxy, lookback_days=7, min_picks=3)
+        except Exception:
+            pass
+
+        # Exclude fixtures already used in all other tabs for this date
+        excluded_keys = set()
+        for collection in ('daily_ai_pro', 'daily_predictions', 'daily_rollover'):
+            try:
+                edoc = db.collection(collection).document(date_str).get()
+                if edoc.exists:
+                    key = 'tips' if collection == 'daily_ai_pro' else 'matches'
+                    for m in (edoc.to_dict() or {}).get(key, []):
+                        h = m.get('home_team', '')
+                        a = m.get('away_team', '')
+                        if h and a:
+                            excluded_keys.add(f"{h}_{a}")
+            except Exception:
+                pass
+
+        result = generate_big_odds_picks(
+            fixtures, predictor, stats_calculator, af_stats,
+            sm_proxy=af_proxy,
+            date_str=date_str,
+            market_penalties=_mp,
+            excluded_match_keys=excluded_keys,
+        )
+
+        if result['status'] == 'success':
+            doc = db.collection('daily_big_odds').document(date_str).get()
+            if doc.exists:
+                data = doc.to_dict()
+                matches = data.get('matches', [])
+                combined = 1.0
+                for m in matches:
+                    combined *= float(m.get('odds', 1.0))
+                return jsonify({
+                    'date': date_str,
+                    'matches': matches,
+                    'match_count': len(matches),
+                    'combined_odds': round(combined, 2),
+                    'slip_confidence': data.get('slip_confidence', 'MEDIUM'),
+                    'source': 'generated',
+                })
+
+        return jsonify({'date': date_str, 'matches': [], 'match_count': 0,
+                        'message': result.get('message', 'No Big Odds picks available.')})
+
+    except Exception as e:
+        print(f"❌ big_odds_picks_by_date error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/ai-pro-picks/<date_str>', methods=['GET'])
 def ai_pro_picks_by_date(date_str):
     """

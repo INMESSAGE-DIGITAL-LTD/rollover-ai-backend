@@ -164,7 +164,9 @@ APIFOOTBALL_BASE = 'https://v3.football.api-sports.io'
 
 
 def _fetch_fixtures_direct(date_str):
-    """Fetch finished fixtures with scores from API-Football (all pages)."""
+    """Fetch finished fixtures with scores from API-Football (all pages).
+    On per-page errors, logs a warning and continues so partial results
+    are never lost because of a single transient failure."""
     fixtures = []
     page = 1
     while True:
@@ -175,6 +177,12 @@ def _fetch_fixtures_direct(date_str):
                 body = json.loads(resp.read().decode())
         except Exception as e:
             print(f"  ⚠️ API-Football error fetching scores for {date_str} p{page}: {e}")
+            # Don't break — if we already have page 1 data, keep it.
+            # Only break if this was the very first page (nothing collected yet).
+            if page == 1:
+                break
+            # For later pages, stop paging but keep whatever we already collected.
+            print(f"  ⚠️ Keeping {len(fixtures)} fixtures collected before error")
             break
 
         for event in body.get('response', []):
@@ -273,7 +281,7 @@ def update_past_results(proxy, days_back=3):
     print(f"🔄 ResultUpdater: Checking last {days_back} days of picks…")
 
     # Process both daily_predictions and daily_ai_pro collections
-    collections_to_check = ['daily_predictions', 'daily_ai_pro', 'daily_rollover']
+    collections_to_check = ['daily_predictions', 'daily_ai_pro', 'daily_rollover', 'daily_big_odds']
 
     for collection_name in collections_to_check:
         for i in range(1, days_back + 1):
@@ -353,10 +361,13 @@ def update_past_results(proxy, days_back=3):
                                 if kickoff.tzinfo is None:
                                     kickoff = kickoff.replace(tzinfo=timezone.utc)
                                 age_hours = (datetime.now(timezone.utc) - kickoff).total_seconds() / 3600
-                                if age_hours > 4:
+                                # 10-hour window: gives late-night matches (22:30 kickoff) time
+                                # to finish AND for the API to report the score before we void.
+                                if age_hours > 10:
                                     updated['result'] = 'void'
+                                    updated['match_status'] = 'FT'  # game is over even if result unknown
                                     day_errors += 1
-                                    print(f"    ⚠️ {home} vs {away} | {market} → void (no score found, {age_hours:.0f}h old)")
+                                    print(f"    ⚠️ {home} vs {away} | {market} → void (no score after {age_hours:.0f}h)")
                             except Exception:
                                 pass
                         else:
@@ -364,6 +375,7 @@ def update_past_results(proxy, days_back=3):
                             age_hours = (datetime.now(timezone.utc) - target).total_seconds() / 3600
                             if age_hours > 24:
                                 updated['result'] = 'void'
+                                updated['match_status'] = 'FT'
                                 day_errors += 1
                                 print(f"    ⚠️ {home} vs {away} | {market} → void (no kickoff, {age_hours:.0f}h old)")
                             else:
