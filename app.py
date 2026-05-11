@@ -374,11 +374,26 @@ def rollover_picks_by_date(date_str):
         except Exception:
             pass
 
+        # Exclude fixtures already in AI Pro or Free tabs for this date
+        excluded_keys = set()
+        for collection in ('daily_ai_pro', 'daily_predictions'):
+            try:
+                edoc = db.collection(collection).document(date_str).get()
+                if edoc.exists:
+                    for m in (edoc.to_dict() or {}).get('matches', []):
+                        h = m.get('home_team', '')
+                        a = m.get('away_team', '')
+                        if h and a:
+                            excluded_keys.add(f"{h}_{a}")
+            except Exception:
+                pass
+
         result = generate_rollover_picks(
             fixtures, predictor, stats_calculator, af_stats,
             sm_proxy=af_proxy,
             date_str=date_str,
             market_penalties=_mp,
+            excluded_match_keys=excluded_keys,
         )
 
         if result['status'] == 'success':
@@ -856,14 +871,12 @@ def regenerate_picks():
             print(f"❌ Regenerate: No fixtures for {date_str}")
             return
 
-        # ── AI Pro ──
+        # ── AI Pro (first) ──
         if 'ai_pro' in tabs:
             try:
-                # Delete old doc
                 db.collection('daily_ai_pro').document(date_str).delete()
                 print(f"🗑️ Deleted daily_ai_pro/{date_str}")
 
-                # Regenerate
                 from services.ai_pro_generator import generate_ai_pro_picks
                 result = generate_ai_pro_picks(
                     fixtures, predictor, stats_calculator, af_stats,
@@ -877,26 +890,7 @@ def regenerate_picks():
                 results['ai_pro'] = f'error: {e}'
                 print(f"❌ AI Pro regenerate error: {e}")
 
-        # ── Rollover ──
-        if 'rollover' in tabs:
-            try:
-                db.collection('daily_rollover').document(date_str).delete()
-                print(f"🗑️ Deleted daily_rollover/{date_str}")
-
-                from services.rollover_generator import generate_rollover_picks
-                result = generate_rollover_picks(
-                    fixtures, predictor, stats_calculator, af_stats,
-                    sm_proxy=af_proxy,
-                    date_str=date_str,
-                    market_penalties=market_penalties,
-                )
-                results['rollover'] = result.get('status', 'unknown')
-                print(f"✅ Regenerated Rollover: {result.get('match_count', 0)} picks, odds {result.get('combined_odds', 0)}")
-            except Exception as e:
-                results['rollover'] = f'error: {e}'
-                print(f"❌ Rollover regenerate error: {e}")
-
-        # ── Free (uses daily_predictions) ──
+        # ── Free/Daily (second — must run before Rollover so its fixtures can be excluded) ──
         if 'free' in tabs:
             try:
                 db.collection('daily_predictions').document(date_str).delete()
@@ -913,6 +907,42 @@ def regenerate_picks():
             except Exception as e:
                 results['free'] = f'error: {e}'
                 print(f"❌ Free regenerate error: {e}")
+
+        # ── Rollover (last — excludes fixtures already used in AI Pro + Free) ──
+        if 'rollover' in tabs:
+            try:
+                db.collection('daily_rollover').document(date_str).delete()
+                print(f"🗑️ Deleted daily_rollover/{date_str}")
+
+                # Collect fixture keys already used in AI Pro and Free tabs
+                excluded_keys = set()
+                for collection in ('daily_ai_pro', 'daily_predictions'):
+                    try:
+                        doc = db.collection(collection).document(date_str).get()
+                        if doc.exists:
+                            for m in (doc.to_dict() or {}).get('matches', []):
+                                h = m.get('home_team', '')
+                                a = m.get('away_team', '')
+                                if h and a:
+                                    excluded_keys.add(f"{h}_{a}")
+                    except Exception:
+                        pass
+                if excluded_keys:
+                    print(f"🛡️ Rollover will exclude {len(excluded_keys)} fixture(s) from AI Pro/Free")
+
+                from services.rollover_generator import generate_rollover_picks
+                result = generate_rollover_picks(
+                    fixtures, predictor, stats_calculator, af_stats,
+                    sm_proxy=af_proxy,
+                    date_str=date_str,
+                    market_penalties=market_penalties,
+                    excluded_match_keys=excluded_keys,
+                )
+                results['rollover'] = result.get('status', 'unknown')
+                print(f"✅ Regenerated Rollover: {result.get('match_count', 0)} picks, odds {result.get('combined_odds', 0)}")
+            except Exception as e:
+                results['rollover'] = f'error: {e}'
+                print(f"❌ Rollover regenerate error: {e}")
 
         print(f"✅ Regeneration complete for {date_str}: {results}")
 

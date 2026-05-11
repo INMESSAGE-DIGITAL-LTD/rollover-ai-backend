@@ -2,16 +2,17 @@
 Rollover-specific prediction generator — Safety First.
 
 Strategy:
-  - Pick exactly 2 of the SUREST bets each day (was 3 in accumulator)
-  - 2 picks at ~75% each = ~56% daily win rate (vs 34% with 3 picks)
+  - Pick exactly 2 of the SUREST bets each day
+  - 2 picks at ~80% each = ~64% daily win rate
   - Only the safest, highest-probability markets are allowed:
       Over 1.5 Goals, Over 2.5 Goals, Double Chance (1X), Double Chance (X2)
   - No risky markets: no BTTS, no Away Win, no Draw, no half-time bets
-  - Searches ALL leagues (no league filter) so dominant-team vs weak-team
-    fixtures in ANY league can be included (e.g. PSG vs small club → Over 1.5)
-  - Strict probability gates: minimum 75% AI probability
+  - Searches ALL leagues (no league filter)
+  - Strict probability gates: minimum 80% AI probability
   - Market penalties applied to avoid repeating losing patterns
-  - Combined odds capped at 2.00 to keep daily slip safe
+  - Single pick odds capped at 1.50 → combined max ~2.15 per day
+  - Weekly total target ≤ 14 odds (2.0/day × 7 days)
+  - NEVER duplicates a fixture already used in Free or AI Pro tabs
   - Stores results in Firestore daily_rollover/{date_str} (separate from AI Pro)
 """
 from datetime import datetime, timedelta
@@ -29,29 +30,30 @@ ROLLOVER_ALLOWED_MARKETS = {
 
 # Minimum AI probability required per market — raised for higher win rate
 ROLLOVER_MIN_PROB = {
-    'Over 1.5 Goals':     0.78,
-    'Over 2.5 Goals':     0.78,
-    'Double Chance (1X)': 0.80,
-    'Double Chance (X2)': 0.78,
+    'Over 1.5 Goals':     0.82,
+    'Over 2.5 Goals':     0.80,
+    'Double Chance (1X)': 0.83,
+    'Double Chance (X2)': 0.81,
 }
 
-# Minimum composite score per market (edge + prob + stability blend)
+# Minimum composite score per market
 ROLLOVER_MIN_COMPOSITE = {
-    'Over 1.5 Goals':     0.50,
-    'Over 2.5 Goals':     0.50,
-    'Double Chance (1X)': 0.52,
-    'Double Chance (X2)': 0.50,
+    'Over 1.5 Goals':     0.55,
+    'Over 2.5 Goals':     0.53,
+    'Double Chance (1X)': 0.56,
+    'Double Chance (X2)': 0.54,
 }
 
 # Minimum edge required for rollover picks (model_prob - implied_prob)
-ROLLOVER_MIN_EDGE = 0.04
+ROLLOVER_MIN_EDGE = 0.05
 
 # Min/Max single-pick odds for Rollover
+# Max 1.50 per pick → combined max ≈ 2.15 with 2 picks
 ROLLOVER_MIN_SINGLE_ODDS = 1.20
-ROLLOVER_MAX_SINGLE_ODDS = 1.60
+ROLLOVER_MAX_SINGLE_ODDS = 1.50
 
-# Max combined odds for the entire slip (2 picks)
-ROLLOVER_MAX_COMBINED_ODDS = 2.50
+# Hard cap on combined slip odds — keeps weekly total ≤ ~14 (2.0 × 7)
+ROLLOVER_MAX_COMBINED_ODDS = 2.15
 
 # Exactly 2 picks — the 2 surest bets
 ROLLOVER_MAX_PICKS = 2
@@ -70,23 +72,25 @@ def generate_rollover_picks(
     date_str=None,
     num_picks=None,
     market_penalties=None,
+    excluded_match_keys=None,
 ):
     """
     Generate safety-first rollover picks from fixtures.
 
-    Picks the 2 SUREST bets from all available fixtures. Uses the same
-    fixture pipeline as the main generator but applies strict market
-    filtering, higher probability thresholds (75%+), edge requirements,
-    and market penalties.
+    Picks the 2 SUREST bets from fixtures NOT already used in Free or AI Pro.
+    Uses strict market filtering, 80%+ probability thresholds, edge requirements,
+    and a hard combined-odds cap of 2.15 per day (target weekly ≤ 14).
 
     Args:
-        fixtures:          List of fixture dicts from SportMonks (all leagues).
-        predictor:         Loaded MultiMarketPredictor instance.
-        stats_calculator:  TeamStatsCalculator instance.
-        sm_stats:          SportMonks stats proxy.
-        date_str:          Target date (YYYY-MM-DD). Defaults to today UTC.
-        num_picks:         Max number of picks (default ROLLOVER_MAX_PICKS).
-        market_penalties:  Dict of {market: multiplier} from market_tracker.
+        fixtures:             List of fixture dicts from API-Football.
+        predictor:            Loaded MultiMarketPredictor instance.
+        stats_calculator:     TeamStatsCalculator instance.
+        sm_stats:             Stats proxy.
+        date_str:             Target date (YYYY-MM-DD). Defaults to today UTC.
+        num_picks:            Max number of picks (default ROLLOVER_MAX_PICKS).
+        market_penalties:     Dict of {market: multiplier} from market_tracker.
+        excluded_match_keys:  Set of "HomeTeam_AwayTeam" strings already used in
+                              Free or AI Pro tabs — rollover will skip these.
 
     Returns:
         dict with keys: status, date, match_count, combined_odds, message
@@ -106,7 +110,10 @@ def generate_rollover_picks(
         }
 
     clear_cache()
+    excluded = excluded_match_keys or set()
     print(f"🛡️ Rollover Generator: Analyzing {len(fixtures)} fixtures for {target_date}...")
+    if excluded:
+        print(f"🛡️ Rollover Generator: Excluding {len(excluded)} fixtures already used in Free/AI Pro")
 
     # Generate all market options using the full AI + stat qualification pipeline
     all_options = generate_match_options(
@@ -135,8 +142,19 @@ def generate_rollover_picks(
                 opt['composite_score'] *= penalty
         safe_options = [
             o for o in safe_options
-            if o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.50)
+            if o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.53)
         ]
+
+    # ── Exclude fixtures already used in Free or AI Pro tabs ─────────────────
+    if excluded:
+        before = len(safe_options)
+        safe_options = [
+            o for o in safe_options
+            if f"{o['home_team']}_{o['away_team']}" not in excluded
+        ]
+        skipped = before - len(safe_options)
+        if skipped:
+            print(f"🛡️ Rollover Generator: Skipped {skipped} duplicate fixture(s) from Free/AI Pro")
 
     print(f"🛡️ Rollover Generator: {len(safe_options)} safe options after filtering")
 
