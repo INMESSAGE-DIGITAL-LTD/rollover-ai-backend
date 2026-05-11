@@ -928,24 +928,6 @@ def regenerate_picks():
     }), 202
 
 
-@app.route('/api/update-results', methods=['POST'])
-def update_results():
-    """Manually trigger result updater. Protected by CRON_SECRET."""
-    import threading
-    auth = request.headers.get('Authorization', '')
-    if auth != f'Bearer {os.environ.get("CRON_SECRET", "")}':
-        return jsonify({'error': 'Unauthorized'}), 401
-    def _run():
-        try:
-            from utils.result_updater import update_past_results
-            result = update_past_results(af_proxy, days_back=5)
-            print(f"✅ Manual result update: {result}")
-        except Exception as e:
-            print(f"❌ Manual result update error: {e}")
-    threading.Thread(target=_run, daemon=True).start()
-    return jsonify({'status': 'started', 'message': 'Result update running in background. Check in 30s.'}), 202
-
-
 @app.route('/api/debug-picks/<date_str>', methods=['GET'])
 def debug_picks(date_str):
     """Temporary debug: show raw build_parlay_slip output. Protected by CRON_SECRET."""
