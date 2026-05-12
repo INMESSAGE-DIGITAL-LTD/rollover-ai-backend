@@ -313,8 +313,19 @@ def update_past_results(proxy, days_back=3):
 
                 print(f"  🔍 {collection_name}/{date_str}: {len(needs_eval)}/{len(matches)} need evaluation")
 
-                # Fetch actual scores directly from SportMonks (no proxy cache)
+                # Fetch actual scores directly from API-Football (no proxy cache).
+                # Also fetch the next UTC day to catch late-night US games whose
+                # UTC kickoff falls past midnight (e.g., 6PM PDT = 01:00 UTC+1).
+                next_date_str = (
+                    datetime.strptime(date_str, '%Y-%m-%d') + timedelta(days=1)
+                ).strftime('%Y-%m-%d')
                 fixtures_result = _fetch_fixtures_direct(date_str)
+                # Only pull next-day fixtures if that date is already in the past
+                if datetime.now(timezone.utc).strftime('%Y-%m-%d') >= next_date_str:
+                    next_day = _fetch_fixtures_direct(next_date_str)
+                    if next_day:
+                        fixtures_result = fixtures_result + next_day
+                        print(f"  📡 Also checked {next_date_str}: +{len(next_day)} late-night fixtures")
 
                 updated_matches = []
                 day_updated = 0

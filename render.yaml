@@ -32,3 +32,25 @@ services:
     envVars:
       - key: FIREBASE_SERVICE_ACCOUNT
         sync: false
+
+  - type: cron
+    name: rollover-backup-generate
+    env: python
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    schedule: "30 7 * * *"
+    startCommand: python cron_backup_generate.py
+    plan: standard
+    envVars:
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+
+  - type: cron
+    name: rollover-update-results-morning
+    env: python
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    schedule: "0 8 * * *"
+    startCommand: python cron_update_results.py
+    plan: standard
+    envVars:
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
