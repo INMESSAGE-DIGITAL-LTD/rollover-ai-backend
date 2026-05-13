@@ -1,0 +1,105 @@
+# .github/workflows/retrain_xgboost.yml
+#
+# Runs every Monday at 06:00 UTC.
+# Steps:
+#   1. Download fresh historical data from football-data.co.uk (FREE)
+#   2. Build training CSV with implied probs + labels
+#   3. Retrain XGBoost for each target market
+#   4. Commit updated models + league_stats.json back to this repo
+#   5. Render detects the push and auto-redeploys the backend
+#
+# Required GitHub Secrets:
+#   None required -- football-data.co.uk needs no auth key.
+#   (Optional) RENDER_DEPLOY_HOOK_URL -- trigger Render deploy immediately
+
+name: Retrain XGBoost
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"         # Every Monday 06:00 UTC
+  workflow_dispatch:             # Allow manual trigger from GitHub UI
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            xgboost \
+            scikit-learn \
+            pandas \
+            numpy \
+            requests \
+            joblib \
+            firebase-admin
+
+      - name: Fetch historical data & compute league DNA
+        run: |
+          python football_data_fetcher.py --update --build-training
+          echo "=== League stats summary ==="
+          python football_data_fetcher.py --stats
+
+      - name: Retrain XGBoost models
+        run: |
+          python train_xgboost.py \
+            --input data/training_data.csv \
+            --output models/ \
+            --targets over15 over25 over35 under25 under35 btts home_win
+
+      - name: Smoke test new models
+        run: |
+          python -c "
+          import joblib, pandas as pd, json, pathlib
+
+          models_dir = pathlib.Path('models')
+          assert (models_dir / 'xgb_over25.joblib').exists(), 'over25 model missing'
+          assert (models_dir / 'xgb_under25.joblib').exists(), 'under25 model missing'
+          assert (models_dir / 'xgb_btts.joblib').exists(), 'btts model missing'
+
+          model = joblib.load(models_dir / 'xgb_over25.joblib')
+          df = pd.read_csv('data/training_data.csv', nrows=5)
+          print('Models OK. Sample predict:', model.predict_proba(df.head(1)))
+          print('Smoke test passed.')
+          "
+
+      - name: Evaluate models on holdout set
+        run: |
+          python evaluate_models.py --data data/training_data.csv --models models/
+        continue-on-error: true
+
+      - name: Commit updated models and stats
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add models/*.joblib || true
+          git add data/league_stats.json || true
+
+          if git diff --cached --quiet; then
+            echo "No model changes -- skipping commit"
+          else
+            git commit -m "chore: retrain XGBoost $(date -u '+%Y-%m-%d')"
+            git push
+          fi
+
+      - name: Trigger Render deploy
+        if: ${{ secrets.RENDER_DEPLOY_HOOK_URL != '' }}
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
+          echo "Render deploy triggered."
