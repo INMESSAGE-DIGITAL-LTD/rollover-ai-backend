@@ -125,12 +125,12 @@ BIG_ODDS_MIN_SINGLE_ODDS = 1.50
 BIG_ODDS_MAX_SINGLE_ODDS = 5.00
 
 # Combined slip odds range
-BIG_ODDS_MIN_COMBINED = 6.0
-BIG_ODDS_MAX_COMBINED = 15.0
+BIG_ODDS_MIN_COMBINED = 4.0
+BIG_ODDS_MAX_COMBINED = 8.0
 
 # Pick count range
-BIG_ODDS_MIN_PICKS = 3
-BIG_ODDS_MAX_PICKS = 10
+BIG_ODDS_MIN_PICKS = 2
+BIG_ODDS_MAX_PICKS = 6
 
 # Max 2 picks of the same market type per slip (more flexible than rollover)
 BIG_ODDS_MAX_SAME_MARKET = 2
