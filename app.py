@@ -185,6 +185,54 @@ def today_predictions():
     return picks_by_date(today)
 
 
+@app.route('/api/ai-pro-picks/<date_str>', methods=['GET'])
+def ai_pro_picks_by_date(date_str):
+    """
+    AI Pro picks for a specific date.
+    Reads from Firestore daily_predictions first (written by cron).
+    Falls back to on-demand generation if empty.
+
+    This endpoint exists for app compatibility — it proxies daily_predictions
+    in a consistent format that the Flutter app expects.
+    """
+    from datetime import datetime as dt
+    try:
+        dt.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+
+    try:
+        db = get_firestore_client()
+        doc = db.collection('daily_predictions').document(date_str).get()
+
+        if doc.exists:
+            data = doc.to_dict()
+            matches = data.get('matches', [])
+            if matches:
+                combined = 1.0
+                for m in matches:
+                    combined *= float(m.get('odds', 1.0))
+                print(f"⚡ /api/ai-pro-picks/{date_str}: serving {len(matches)} picks from Firestore")
+                return jsonify({
+                    'date': date_str,
+                    'slip': {
+                        'matches': matches,
+                        'match_count': len(matches),
+                        'combined_odds': round(combined, 2),
+                        'slip_confidence': data.get('slip_confidence', 'HIGH'),
+                    },
+                    'source': 'firestore',
+                })
+
+        # Fall back to on-demand generation via /api/picks/<date_str>
+        print(f"⚠️ /api/ai-pro-picks/{date_str}: no Firestore doc, falling back to on-demand")
+        return picks_by_date(date_str)
+
+    except Exception as e:
+        print(f"❌ Error in /api/ai-pro-picks/{date_str}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/picks/<date_str>', methods=['GET'])
 def picks_by_date(date_str):
     """

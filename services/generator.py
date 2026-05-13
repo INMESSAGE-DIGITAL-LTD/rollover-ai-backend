@@ -66,7 +66,7 @@ def generate_and_store(
         except Exception as e:
             print(f"⚠️ Generator: Market tracker failed (non-fatal): {e}")
 
-    # Run AI
+    # Run AI — first pass (strict: max single odds 1.60)
     print(f"🧠 Generator: Running AI on {len(fixtures)} fixtures (max={num_matches})...")
     clear_cache()
     result = build_parlay_slip(
@@ -81,6 +81,43 @@ def generate_and_store(
 
     slip = result.get('slip', {})
     matches = slip.get('matches', [])
+
+    # Second pass: if fewer than 5 picks, relax max_odds to 1.80 to include
+    # Under 1.5 / Under 2.5 markets (safety rules allow up to 1.70-1.80 for these).
+    # All second-pass picks still must pass the quality gate (edge threshold).
+    MIN_PICKS = 5
+    if len(matches) < MIN_PICKS:
+        print(f"⚠️ Generator: Only {len(matches)} picks in first pass — running second pass with max_odds=1.80")
+        already_used = {
+            f"{m.get('home_team','')}_{m.get('away_team','')}_{m.get('market','')}"
+            for m in matches
+        }
+        result2 = build_parlay_slip(
+            fixtures, predictor, stats_calculator,
+            num_matches=num_matches,
+            min_odds=min_odds,
+            max_odds=1.80,  # relaxed ceiling unlocks Under markets
+            sm_stats=sm_stats,
+            free_mode=False,
+            market_penalties=market_penalties,
+        )
+        extra = [
+            m for m in result2.get('slip', {}).get('matches', [])
+            if f"{m.get('home_team','')}_{m.get('away_team','')}_{m.get('market','')}"
+            not in already_used
+        ]
+        matches = matches + extra
+        # Recalculate combined odds for the full list
+        combined_total = 1.0
+        for m in matches:
+            combined_total *= float(m.get('odds', 1.0))
+        slip = {
+            'matches': matches,
+            'match_count': len(matches),
+            'combined_odds': round(combined_total, 2),
+            'slip_confidence': slip.get('slip_confidence', 'NONE'),
+        }
+        print(f"✅ Generator: Second pass added {len(extra)} picks → {len(matches)} total")
 
     if not matches:
         return {
