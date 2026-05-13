@@ -986,8 +986,21 @@ def build_parlay_slip(fixtures, predictor, stats_calculator, num_matches=5, min_
             if penalty != 1.0:
                 opt['composite_score'] = opt.get('composite_score', 0) * penalty
 
+    # Safe markets float to top; risky 1X2/Draw sink to bottom.
+    _SAFE_BOOST = {
+        'Over 1.5 Goals': 1.35, 'Double Chance (1X)': 1.30,
+        'Double Chance (X2)': 1.30, 'Double Chance (12)': 1.25,
+        'Home Over 0.5 Goals': 1.30, 'Away Over 0.5 Goals': 1.25,
+        'Home to Score': 1.25, 'Away to Score': 1.20,
+        'Both Teams to Score': 1.15,
+    }
+    _RISKY_PENALTY = {'Home Win': 0.80, 'Away Win': 0.80, 'Draw': 0.65}
+
     import math
-    filtered.sort(key=lambda x: x.get('composite_score', 0) * math.log(max(x['odds'], 1.01)), reverse=True)
+    def _slip_sort_score(x):
+        base = x.get('composite_score', 0) * math.log(max(x['odds'], 1.01))
+        return base * _SAFE_BOOST.get(x['market'], 1.0) * _RISKY_PENALTY.get(x['market'], 1.0)
+    filtered.sort(key=_slip_sort_score, reverse=True)
 
     slip_matches = []
     combined_odds = 1.0

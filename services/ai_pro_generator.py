@@ -20,46 +20,67 @@ from firebase_config import get_firestore_client
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 
 
-# Minimum AI probability per market — balanced: strict enough to win, loose enough to find picks
+# Minimum AI probability per market.
+# Risky 1X2 markets raised significantly — they're harder to call and hurt streaks.
 AI_PRO_MIN_PROB = {
-    'Home Win':                0.62,
-    'Away Win':                0.62,
-    'Draw':                    0.55,
+    'Home Win':                0.72,  # raised: 1X2 too unpredictable below this
+    'Away Win':                0.72,  # raised
+    'Draw':                    0.65,  # raised: draw is hardest market
     'Double Chance (1X)':      0.74,
     'Double Chance (X2)':      0.72,
     'Double Chance (12)':      0.70,
-    'Both Teams to Score':     0.66,
-    'BTTS No':                 0.62,
+    'Both Teams to Score':     0.68,
+    'BTTS No':                 0.65,
     'Over 1.5 Goals':          0.72,
-    'Over 2.5 Goals':          0.68,
-    'Under 2.5 Goals':         0.64,
+    'Over 2.5 Goals':          0.70,
+    'Under 2.5 Goals':         0.66,
     'Under 3.5 Goals':         0.68,
     'Home Over 0.5 Goals':     0.74,
-    'Home Over 1.5 Goals':     0.68,
-    'Home Over 2.5 Goals':     0.60,
-    'Away Over 0.5 Goals':     0.70,
-    'Away Over 1.5 Goals':     0.65,
-    'Away Over 2.5 Goals':     0.58,
+    'Home Over 1.5 Goals':     0.70,
+    'Home Over 2.5 Goals':     0.63,
+    'Away Over 0.5 Goals':     0.72,
+    'Away Over 1.5 Goals':     0.67,
+    'Away Over 2.5 Goals':     0.60,
     'Home to Score':           0.74,
-    'Away to Score':           0.70,
-    '1st Half Over 0.5':       0.68,
-    '2nd Half Over 0.5':       0.68,
-    '1st Half Under 0.5':      0.62,
-    '2nd Half Under 0.5':      0.62,
+    'Away to Score':           0.72,
+    '1st Half Over 0.5':       0.70,
+    '2nd Half Over 0.5':       0.70,
+    '1st Half Under 0.5':      0.65,
+    '2nd Half Under 0.5':      0.65,
 }
 
-# Minimum composite score per market
+# Safe markets get a scoring boost — prioritised over risky 1X2 picks.
+SAFE_MARKET_BOOST = {
+    'Over 1.5 Goals':          1.35,
+    'Double Chance (1X)':      1.30,
+    'Double Chance (X2)':      1.30,
+    'Double Chance (12)':      1.25,
+    'Home Over 0.5 Goals':     1.30,
+    'Away Over 0.5 Goals':     1.25,
+    'Home to Score':           1.25,
+    'Away to Score':           1.20,
+    'Both Teams to Score':     1.15,
+}
+
+# Risky markets get a scoring penalty to push them to the back of the queue.
+RISKY_MARKET_PENALTY = {
+    'Home Win':   0.75,
+    'Away Win':   0.75,
+    'Draw':       0.60,
+}
+
+# Minimum composite score per market — risky markets need higher bar
 AI_PRO_MIN_COMPOSITE = {
-    'Home Win':                0.46,
-    'Away Win':                0.46,
-    'Draw':                    0.40,
+    'Home Win':                0.52,  # raised
+    'Away Win':                0.52,  # raised
+    'Draw':                    0.48,  # raised
     'Double Chance (1X)':      0.49,
     'Double Chance (X2)':      0.48,
     'Double Chance (12)':      0.47,
-    'Both Teams to Score':     0.46,
-    'BTTS No':                 0.44,
+    'Both Teams to Score':     0.47,
+    'BTTS No':                 0.45,
     'Over 1.5 Goals':          0.48,
-    'Over 2.5 Goals':          0.46,
+    'Over 2.5 Goals':          0.47,
     'Under 2.5 Goals':         0.45,
     'Under 3.5 Goals':         0.47,
     'Home Over 0.5 Goals':     0.48,
@@ -193,9 +214,19 @@ def generate_ai_pro_picks(
     clear_cache()
     print(f"🧠 AI Pro Generator: Analyzing {len(fixtures)} fixtures for {target_date}...")
 
+    # Drop cup/knockout fixtures — results are too unpredictable for AI Pro
+    from utils.fixture_fetcher import CUP_LEAGUE_IDS
+    safe_fixtures = [
+        f for f in fixtures
+        if f.get('league') not in CUP_LEAGUE_IDS
+    ]
+    dropped_cups = len(fixtures) - len(safe_fixtures)
+    if dropped_cups:
+        print(f"🧠 AI Pro Generator: Dropped {dropped_cups} cup fixtures")
+
     # Generate all market options using the full AI + stat qualification pipeline
     all_options = generate_match_options(
-        fixtures, predictor, stats_calculator, af_stats=None, free_mode=False
+        safe_fixtures, predictor, stats_calculator, af_stats=None, free_mode=False
     )
 
     print(f"🧠 AI Pro Generator: {len(all_options)} total options before filtering")
@@ -233,9 +264,15 @@ def generate_ai_pro_picks(
             'message': 'No picks met AI Pro quality standards today.',
         }
 
-    # Sort by value score: composite_score × log(odds) — rewards high confidence AND good odds
+    # Sort: composite_score × log(odds) × safe/risky market multiplier
+    # Safe markets float to top; risky 1X2 sink to bottom.
     import math
-    qualified.sort(key=lambda x: x.get('composite_score', 0) * math.log(max(x['odds'], 1.01)), reverse=True)
+    def _sort_score(o):
+        base = o.get('composite_score', 0) * math.log(max(o['odds'], 1.01))
+        boost = SAFE_MARKET_BOOST.get(o['market'], 1.0)
+        penalty = RISKY_MARKET_PENALTY.get(o['market'], 1.0)
+        return base * boost * penalty
+    qualified.sort(key=_sort_score, reverse=True)
 
     # ── Select tips: one per match, dynamic count, market diversity ───────────
     selected = []
