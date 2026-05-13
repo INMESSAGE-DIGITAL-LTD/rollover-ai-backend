@@ -135,6 +135,7 @@ def train_model(
         reg_lambda=1.0,
         scale_pos_weight=scale_pos_weight,
         eval_metric="logloss",
+        early_stopping_rounds=30,
         random_state=42,
         n_jobs=-1,
     )
@@ -143,7 +144,6 @@ def train_model(
         X_train, y_train,
         eval_set=[(X_test, y_test)],
         verbose=False,
-        early_stopping_rounds=30,
     )
 
     y_prob = model.predict_proba(X_test)[:, 1]
