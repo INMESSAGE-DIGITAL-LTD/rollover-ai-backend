@@ -138,21 +138,41 @@ class SportMonksProxy:
         league_logo = league_data.get('image_path', '')
         league_country = (league_data.get('country') or {}).get('name', '')
 
-        # Parse scores
+        # Parse scores — prefer CURRENT (live/final), fall back to 2ND_HALF / FULLTIME
+        # Also extract 1ST_HALF for halftime score evaluation (1st/2nd half markets)
         home_score = None
         away_score = None
+        ht_home_score = None
+        ht_away_score = None
         scores = event.get('scores', [])
+        # Priority: CURRENT > 2ND_HALF > FULLTIME (for finished games from date endpoint)
+        score_priority = {'CURRENT': 0, '2ND_HALF': 1, 'FULLTIME': 2}
+        best_priority = {}  # participant -> best priority seen
         for s in scores:
             desc = s.get('description', '')
             score_data = s.get('score', {})
             participant = score_data.get('participant', '')
             goals = score_data.get('goals')
-            if desc == 'CURRENT' and goals is not None:
-                g = int(goals) if isinstance(goals, int) else int(goals)
+            if goals is None:
+                continue
+            g = int(goals)
+            # Halftime score (goals scored in 1st half only)
+            if desc == '1ST_HALF':
+                if participant == 'home':
+                    ht_home_score = g
+                elif participant == 'away':
+                    ht_away_score = g
+                continue
+            # Full-time / live score with priority
+            if desc not in score_priority:
+                continue
+            priority = score_priority[desc]
+            if participant not in best_priority or priority < best_priority[participant]:
                 if participant == 'home':
                     home_score = g
                 elif participant == 'away':
                     away_score = g
+                best_priority[participant] = priority
 
         return {
             'id': event.get('id'),
@@ -164,6 +184,8 @@ class SportMonksProxy:
             'away_short_code': away_short,
             'home_score': home_score,
             'away_score': away_score,
+            'ht_home_score': ht_home_score,
+            'ht_away_score': ht_away_score,
             'match_status': status,
             'state_id': state_id,
             'starting_at': event.get('starting_at', ''),

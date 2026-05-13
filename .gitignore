@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -5,8 +6,26 @@ __pycache__/
 .Python
 env/
 venv/
+
+# Environment & secrets
 .env
+**/fcm.json
+**/firebase-credentials*.json
+
+# Logs
 *.log
+
+# OS / IDE
 .DS_Store
 .vscode/
 .idea/
+
+# Laravel (admin/)
+admin/vendor/
+admin/node_modules/
+admin/storage/framework/cache/data/
+admin/storage/logs/
+admin/.env
+admin/public/hot
+admin/public/storage
+admin/bootstrap/cache/*.php

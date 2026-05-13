@@ -18,11 +18,12 @@ def generate_and_store(
     stats_calculator,
     sm_stats,
     *,
-    num_matches=10,
+    num_matches=7,
     min_odds=1.10,
-    max_odds=1.60,
+    max_odds=2.00,
     save_sqlite_fn=None,
     sm_proxy=None,
+    date_str=None,
 ):
     """
     Run AI predictions on fixtures and write results to Firestore.
@@ -32,21 +33,30 @@ def generate_and_store(
         predictor: Loaded MultiMarketPredictor instance.
         stats_calculator: TeamStatsCalculator instance.
         sm_stats: SportMonks stats proxy.
-        num_matches: Max matches to generate (default 10).
+        num_matches: Max matches to generate (default 7).
         min_odds: Minimum odds filter (default 1.10).
-        max_odds: Maximum odds filter (default 1.60).
+        max_odds: Maximum odds filter (default 1.30).
         save_sqlite_fn: Optional callable(date_str, picks_list) for SQLite backup.
 
     Returns:
         dict with keys: status, date, match_count, combined_odds, message
     """
-    from utils.sportmonks_stats import clear_cache
+    from utils.apifootball_stats import clear_cache
     from utils.fixture_fetcher import build_parlay_slip
     from utils.market_tracker import get_market_penalties
 
-    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+    today_str = date_str if date_str else datetime.utcnow().strftime('%Y-%m-%d')
 
     if not fixtures:
+        # Write placeholder so on-demand throttle can prevent repeated quota drain
+        try:
+            db = get_firestore_client()
+            db.collection('daily_predictions').document(today_str).set({
+                'date': today_str, 'matches': [], 'match_count': 0,
+                'generated_at': SERVER_TIMESTAMP, 'status': 'no_fixtures',
+            })
+        except Exception:
+            pass
         return {
             'status': 'no_fixtures',
             'date': today_str,
@@ -74,8 +84,8 @@ def generate_and_store(
         num_matches=num_matches,
         min_odds=min_odds,
         max_odds=max_odds,
-        sm_stats=sm_stats,
-        free_mode=False,
+        af_stats=None,   # Disable live team stats API calls (saves ~1000 calls/run)
+        free_mode=False, # CSV stats + AF predictions are sufficient for qualification
         market_penalties=market_penalties,
     )
 
@@ -120,6 +130,16 @@ def generate_and_store(
         print(f"✅ Generator: Second pass added {len(extra)} picks → {len(matches)} total")
 
     if not matches:
+        # Write placeholder so on-demand throttle can prevent repeated quota drain
+        try:
+            db = get_firestore_client()
+            db.collection('daily_predictions').document(today_str).set({
+                'date': today_str, 'matches': [], 'match_count': 0,
+                'total_fixtures_analyzed': result.get('total_fixtures_analyzed', 0),
+                'generated_at': SERVER_TIMESTAMP, 'status': 'no_matches',
+            })
+        except Exception:
+            pass
         return {
             'status': 'no_matches',
             'date': today_str,
@@ -127,7 +147,29 @@ def generate_and_store(
             'message': 'AI could not generate matches for today.',
         }
 
-    print(f"✅ Generator: {len(matches)} matches, combined odds: {slip.get('combined_odds', 0)}")
+    # ── Cap to num_matches, write all qualifying picks directly ──────────────
+    # No AI Pro/Free split here — Free tab gets the top picks by value score.
+    # Combined odds cap: if combined > 15.0 (too exotic), drop the highest-odds
+    # pick until it's within range or only 1 pick remains.
+    while len(matches) > 1:
+        combined = 1.0
+        for m in matches:
+            combined *= float(m.get('odds', 1.0))
+        if combined <= 15.0:
+            break
+        matches = sorted(matches, key=lambda m: float(m.get('odds', 1.0)), reverse=True)
+        matches.pop(0)
+
+    matches = matches[:num_matches]
+    slip['matches'] = matches
+    slip['match_count'] = len(matches)
+
+    overall = 1.0
+    for m in matches:
+        overall *= float(m.get('odds', 1.0))
+    slip['combined_odds'] = round(overall, 2)
+
+    print(f"✅ Generator: {len(matches)} matches, combined odds {slip['combined_odds']}")
 
     # Write to Firestore
     db = get_firestore_client()
@@ -212,3 +254,53 @@ def _cleanup_old_predictions(db):
             print(f"🗑️ Generator: Deleted {deleted} old docs (before {cutoff})")
     except Exception as e:
         print(f"⚠️ Generator: Cleanup failed (non-fatal): {e}")
+
+
+def _calc_combined(matches):
+    """Calculate combined odds for a list of matches."""
+    odds = 1.0
+    for m in matches:
+        odds *= float(m.get('odds', 1.0))
+    return odds
+
+
+def _enforce_combined_odds(picks, *, min_combined, max_combined, all_pool, exclude=None, max_count=None):
+    """
+    Enforce combined odds within [min_combined, max_combined].
+    - If too high: drop the highest-odds pick.
+    - If too low and max_count allows: add picks from all_pool that aren't already used.
+    - max_count: hard cap on number of picks (won't add beyond this).
+    """
+    result = list(picks)
+    exclude_keys = set()
+    if exclude:
+        exclude_keys = {f"{m.get('home_team')}_{m.get('away_team')}" for m in exclude}
+
+    # Cap: remove highest-odds pick until combined ≤ max
+    while len(result) > 1 and _calc_combined(result) > max_combined:
+        result.sort(key=lambda m: float(m.get('odds', 1.0)), reverse=True)
+        result.pop(0)
+
+    # Floor: add picks from pool if combined < min (respecting max_count)
+    if _calc_combined(result) < min_combined:
+        if max_count is not None and len(result) >= max_count:
+            pass  # Already at max count, don't add more picks
+        else:
+            used_keys = {f"{m.get('home_team')}_{m.get('away_team')}" for m in result}
+            used_keys.update(exclude_keys)
+            extras = [
+                m for m in all_pool
+                if f"{m.get('home_team')}_{m.get('away_team')}" not in used_keys
+            ]
+            for extra in extras:
+                if max_count is not None and len(result) >= max_count:
+                    break
+                test = result + [extra]
+                combined = _calc_combined(test)
+                if combined <= max_combined:
+                    result = test
+                    used_keys.add(f"{extra.get('home_team')}_{extra.get('away_team')}")
+                    if combined >= min_combined:
+                        break
+
+    return result

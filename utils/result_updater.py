@@ -1,5 +1,4 @@
-"""
-Result Auto-Updater.
+"""Result Auto-Updater.
 
 Fetches actual FT scores from SportMonks for past predictions stored in
 Firestore and marks each pick as 'won', 'lost', or 'void' (inconclusive).
@@ -12,10 +11,32 @@ Only updates picks that are still 'pending'. Already-resolved picks are
 left untouched so results are never overwritten.
 """
 from datetime import datetime, timedelta, timezone
+import json
+import os
+import urllib.request
+import urllib.error
+
+SPORTMONKS_TOKEN = os.environ.get(
+    'SPORTMONKS_TOKEN',
+    'b7EFSY6Bmrxisf6OswWjYArQUHMakSEDRMTJVoFiH56sbHsxaJxFRpVrOuoL',
+)
+SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
 
-def _determine_result(home_score, away_score, market):
-    """Return 'won', 'lost', or None (undeterminable from FT score)."""
+def _extract_goal_line(market):
+    """Extract the numeric goal line from a market string, e.g. '1st Half Over 0.5' → 0.5.
+    Always looks for the number AFTER 'over'/'under' so '2nd Half Over 0.5'
+    returns 0.5, not 2.0 (which would be extracted from '2nd')."""
+    import re
+    ov_match = re.search(r'(?:over|under)\s*(\d+\.?\d*)', market, re.IGNORECASE)
+    if ov_match:
+        return float(ov_match.group(1))
+    match = re.search(r'(\d+\.?\d*)', market)
+    return float(match.group(1)) if match else 0.5
+
+
+def _determine_result(home_score, away_score, market, ht_home_score=None, ht_away_score=None):
+    """Return 'won', 'lost', or None (undeterminable)."""
     if home_score is None or away_score is None:
         return None
 
@@ -78,28 +99,165 @@ def _determine_result(home_score, away_score, market):
     if m == 'away over 2.5 goals':
         return 'won' if away_score >= 3 else 'lost'
 
-    # Half-time markets can't be determined from FT score
+    # Half-time markets — need HT scores
+    if '1st half' in m:
+        if ht_home_score is None or ht_away_score is None:
+            return None
+        ht_total = ht_home_score + ht_away_score
+        if 'over' in m:
+            return 'won' if ht_total > _extract_goal_line(m) else 'lost'
+        if 'under' in m:
+            return 'won' if ht_total < _extract_goal_line(m) else 'lost'
+        return None
+
+    if '2nd half' in m:
+        if ht_home_score is None or ht_away_score is None:
+            return None
+        h2_total = (home_score - ht_home_score) + (away_score - ht_away_score)
+        if 'over' in m:
+            return 'won' if h2_total > _extract_goal_line(m) else 'lost'
+        if 'under' in m:
+            return 'won' if h2_total < _extract_goal_line(m) else 'lost'
+        return None
+
     return None
 
 
+def _normalize_name(name):
+    """Normalise a team name for fuzzy matching."""
+    import unicodedata
+    n = name.lower().strip().replace('-', ' ').replace('_', ' ')
+    n = ''.join(
+        c for c in unicodedata.normalize('NFD', n)
+        if unicodedata.category(c) != 'Mn'
+    )
+    n = ' '.join(n.split())
+    return n
+
+
+def _names_match(a, b):
+    """True if two team names are the same after normalisation, or one
+    contains the other, or they share >=1 significant token."""
+    na, nb = _normalize_name(a), _normalize_name(b)
+    if na == nb:
+        return True
+    if len(na) >= 3 and len(nb) >= 3:
+        if na in nb or nb in na:
+            return True
+    # Token overlap: if >=1 word of length >=4 is shared -> same club
+    tokens_a = {w for w in na.split() if len(w) >= 4}
+    tokens_b = {w for w in nb.split() if len(w) >= 4}
+    if tokens_a and tokens_b and len(tokens_a & tokens_b) >= 1:
+        return True
+    # Short 3-char tokens (e.g. "aek", "ael", "psv", "cfr")
+    tokens_a3 = {w for w in na.split() if len(w) == 3}
+    tokens_b3 = {w for w in nb.split() if len(w) == 3}
+    if tokens_a3 and tokens_b3 and len(tokens_a3 & tokens_b3) >= 1:
+        return True
+    return False
+
+
+# ── API-Football direct call for scores ──
+
+APIFOOTBALL_KEY = os.environ.get('APIFOOTBALL_KEY', 'da7a6fc2f03e7fb7994995143d29358f')
+APIFOOTBALL_BASE = 'https://v3.football.api-sports.io'
+
+
+def _fetch_fixtures_direct(date_str):
+    """Fetch finished fixtures with scores from API-Football (all pages).
+    On per-page errors, logs a warning and continues so partial results
+    are never lost because of a single transient failure."""
+    fixtures = []
+    page = 1
+    while True:
+        url = f"{APIFOOTBALL_BASE}/fixtures?date={date_str}&timezone=UTC&page={page}"
+        try:
+            req = urllib.request.Request(url, headers={'x-apisports-key': APIFOOTBALL_KEY})
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                body = json.loads(resp.read().decode())
+        except Exception as e:
+            print(f"  ⚠️ API-Football error fetching scores for {date_str} p{page}: {e}")
+            # Don't break — if we already have page 1 data, keep it.
+            # Only break if this was the very first page (nothing collected yet).
+            if page == 1:
+                break
+            # For later pages, stop paging but keep whatever we already collected.
+            print(f"  ⚠️ Keeping {len(fixtures)} fixtures collected before error")
+            break
+
+        for event in body.get('response', []):
+            status = (event.get('fixture') or {}).get('status', {})
+            short = status.get('short', '')
+            if short not in ('FT', 'AET', 'PEN'):
+                continue
+
+            teams = event.get('teams', {})
+            home_name = (teams.get('home') or {}).get('name', '')
+            away_name = (teams.get('away') or {}).get('name', '')
+            if not home_name or not away_name:
+                continue
+
+            goals = event.get('goals', {})
+            score = event.get('score', {})
+            home_score = goals.get('home')
+            away_score = goals.get('away')
+            ht = score.get('halftime', {})
+            ht_home = ht.get('home')
+            ht_away = ht.get('away')
+
+            if home_score is None or away_score is None:
+                continue
+
+            fixtures.append({
+                'home_team': home_name,
+                'away_team': away_name,
+                'home_score': int(home_score),
+                'away_score': int(away_score),
+                'ht_home_score': int(ht_home) if ht_home is not None else None,
+                'ht_away_score': int(ht_away) if ht_away is not None else None,
+                'match_status': 'FT',
+            })
+
+        # Check if there are more pages
+        paging = body.get('paging', {})
+        current = paging.get('current', 1)
+        total_pages = paging.get('total', 1)
+        if current >= total_pages:
+            break
+        page += 1
+
+    print(f"  📡 API-Football: {len(fixtures)} finished fixtures for {date_str} ({page} page(s))")
+    return {'fixtures': fixtures}
+
+
 def _find_score(fixtures_data, home_team, away_team):
-    """Match a prediction to a finished fixture by team name, return (h, a)."""
+    """Match a prediction to a finished fixture by team name."""
     if not fixtures_data:
-        return None, None
+        return None, None, None, None
 
-    home_lower = home_team.lower().strip()
-    away_lower = away_team.lower().strip()
-
-    for fix in fixtures_data.get('fixtures', []):
-        if (fix.get('home_team', '').lower().strip() == home_lower and
-                fix.get('away_team', '').lower().strip() == away_lower):
-            status = fix.get('match_status', '')
+    fixtures = fixtures_data.get('fixtures', [])
+    for fix in fixtures:
+        if (_names_match(fix.get('home_team', ''), home_team) and
+                _names_match(fix.get('away_team', ''), away_team)):
             h = fix.get('home_score')
             a = fix.get('away_score')
-            if status in ('FT', 'AET', 'PEN') and h is not None and a is not None:
-                return int(h), int(a)
+            ht_h = fix.get('ht_home_score')
+            ht_a = fix.get('ht_away_score')
+            if h is not None and a is not None:
+                return int(h), int(a), \
+                    int(ht_h) if ht_h is not None else None, \
+                    int(ht_a) if ht_a is not None else None
 
-    return None, None
+    # Debug: log first 5 available names to help diagnose mismatches
+    avail = [(f.get('home_team', ''), f.get('away_team', '')) for f in fixtures[:5]]
+    print(f"    🔎 No match for '{home_team}' vs '{away_team}'. "
+          f"Available (first 5): {avail}")
+    return None, None, None, None
+
+
+def _is_pending(m):
+    r = m.get('result')
+    return r is None or r in ('pending', 'void')
 
 
 def update_past_results(proxy, days_back=3):
@@ -107,12 +265,8 @@ def update_past_results(proxy, days_back=3):
     Read the last `days_back` days of Firestore daily_predictions, fetch
     actual scores from SportMonks, and update each match's `result` field.
 
-    Args:
-        proxy:     SportMonksProxy instance.
-        days_back: How many past days to process (default 3).
-
-    Returns:
-        dict with total updated counts.
+    Uses direct SportMonks API calls (not the proxy cache) to ensure
+    fresh score data is always available.
     """
     try:
         from firebase_config import get_firestore_client
@@ -126,101 +280,150 @@ def update_past_results(proxy, days_back=3):
 
     print(f"🔄 ResultUpdater: Checking last {days_back} days of picks…")
 
-    for i in range(1, days_back + 1):
-        target = datetime.now(timezone.utc) - timedelta(days=i)
-        date_str = target.strftime('%Y-%m-%d')
+    # Process both daily_predictions and daily_ai_pro collections
+    collections_to_check = ['daily_predictions', 'daily_ai_pro', 'daily_rollover', 'daily_big_odds']
 
-        try:
-            ref = db.collection('daily_predictions').document(date_str)
-            doc = ref.get()
-            if not doc.exists:
-                continue
+    for collection_name in collections_to_check:
+        for i in range(1, days_back + 1):
+            target = datetime.now(timezone.utc) - timedelta(days=i)
+            date_str = target.strftime('%Y-%m-%d')
 
-            data = doc.to_dict()
-            matches = data.get('matches', [])
-            if not matches:
-                continue
-
-            # Check if all picks are already resolved — skip early
-            pending = [m for m in matches if m.get('result', 'pending') == 'pending']
-            if not pending:
-                print(f"  ✅ {date_str}: all picks already resolved")
-                continue
-
-            # Fetch actual scores for this date
-            fixtures_result = proxy.get_fixtures(date_str)
-
-            updated_matches = []
-            day_updated = 0
-            day_errors = 0
-
-            for match in matches:
-                # Already resolved — leave it alone
-                if match.get('result', 'pending') != 'pending':
-                    updated_matches.append(match)
+            try:
+                ref = db.collection(collection_name).document(date_str)
+                doc = ref.get()
+                if not doc.exists:
                     continue
 
-                home = match.get('home_team', '')
-                away = match.get('away_team', '')
-                market = match.get('market', '')
+                data = doc.to_dict()
 
-                home_score, away_score = _find_score(fixtures_result, home, away)
-                result = _determine_result(home_score, away_score, market)
+                # daily_predictions uses 'matches', daily_ai_pro uses 'tips'
+                matches_key = 'matches'
+                if collection_name == 'daily_ai_pro':
+                    matches_key = 'tips'
 
-                updated = dict(match)
-                if result is not None:
-                    updated['result'] = result
-                    if home_score is not None:
-                        updated['actual_home_score'] = home_score
-                        updated['actual_away_score'] = away_score
-                    day_updated += 1
-                else:
-                    # Score not found or market undeterminable (half-time etc.)
-                    # Mark void only if the game should be finished by now
-                    # (kickoff was > 2.5 hours ago)
-                    kickoff_str = match.get('kickoff', '')
-                    if kickoff_str:
-                        try:
-                            from datetime import datetime as dt
-                            kickoff = dt.fromisoformat(kickoff_str.replace('Z', '+00:00'))
-                            age_hours = (datetime.now(timezone.utc) - kickoff).total_seconds() / 3600
-                            if age_hours > 2.5 and home_score is None:
-                                # Game should be over but score not found — void
+                matches = data.get(matches_key, [])
+                if not matches:
+                    continue
+
+                # Check if all picks are already resolved
+                needs_eval = [m for m in matches if _is_pending(m)]
+                if not needs_eval:
+                    print(f"  ✅ {collection_name}/{date_str}: all resolved")
+                    continue
+
+                print(f"  🔍 {collection_name}/{date_str}: {len(needs_eval)}/{len(matches)} need evaluation")
+
+                # Fetch actual scores directly from API-Football (no proxy cache).
+                # Also fetch the next UTC day to catch late-night US games whose
+                # UTC kickoff falls past midnight (e.g., 6PM PDT = 01:00 UTC+1).
+                next_date_str = (
+                    datetime.strptime(date_str, '%Y-%m-%d') + timedelta(days=1)
+                ).strftime('%Y-%m-%d')
+                fixtures_result = _fetch_fixtures_direct(date_str)
+                # Only pull next-day fixtures if that date is already in the past
+                if datetime.now(timezone.utc).strftime('%Y-%m-%d') >= next_date_str:
+                    next_day = _fetch_fixtures_direct(next_date_str)
+                    if next_day:
+                        fixtures_result = fixtures_result + next_day
+                        print(f"  📡 Also checked {next_date_str}: +{len(next_day)} late-night fixtures")
+
+                updated_matches = []
+                day_updated = 0
+                day_errors = 0
+
+                for match in matches:
+                    if not _is_pending(match):
+                        updated_matches.append(match)
+                        continue
+
+                    home = match.get('home_team', '')
+                    away = match.get('away_team', '')
+                    market = match.get('market', '')
+
+                    home_score, away_score, ht_home_score, ht_away_score = \
+                        _find_score(fixtures_result, home, away)
+                    result = _determine_result(
+                        home_score, away_score, market,
+                        ht_home_score=ht_home_score,
+                        ht_away_score=ht_away_score,
+                    )
+
+                    updated = dict(match)
+                    if result is not None:
+                        updated['result'] = result
+                        if home_score is not None:
+                            updated['home_score'] = home_score
+                            updated['away_score'] = away_score
+                            updated['match_status'] = 'FT'
+                            updated['actual_home_score'] = home_score
+                            updated['actual_away_score'] = away_score
+                        if ht_home_score is not None:
+                            updated['ht_home_score'] = ht_home_score
+                            updated['ht_away_score'] = ht_away_score
+                        day_updated += 1
+                        print(f"    ✅ {home} vs {away} | {market} → {result} ({home_score}-{away_score})")
+                    else:
+                        # Score not found — check if game should be old enough to void
+                        kickoff_str = match.get('kickoff', '')
+                        if kickoff_str:
+                            try:
+                                from datetime import datetime as dt
+                                kickoff = dt.fromisoformat(kickoff_str.replace('Z', '+00:00'))
+                                if kickoff.tzinfo is None:
+                                    kickoff = kickoff.replace(tzinfo=timezone.utc)
+                                age_hours = (datetime.now(timezone.utc) - kickoff).total_seconds() / 3600
+                                # 10-hour window: gives late-night matches (22:30 kickoff) time
+                                # to finish AND for the API to report the score before we void.
+                                if age_hours > 10:
+                                    updated['result'] = 'void'
+                                    updated['match_status'] = 'FT'  # game is over even if result unknown
+                                    day_errors += 1
+                                    print(f"    ⚠️ {home} vs {away} | {market} → void (no score after {age_hours:.0f}h)")
+                            except Exception:
+                                pass
+                        else:
+                            # No kickoff time saved — if it's > 24h old, void it
+                            age_hours = (datetime.now(timezone.utc) - target).total_seconds() / 3600
+                            if age_hours > 24:
                                 updated['result'] = 'void'
+                                updated['match_status'] = 'FT'
                                 day_errors += 1
-                        except Exception:
-                            pass
+                                print(f"    ⚠️ {home} vs {away} | {market} → void (no kickoff, {age_hours:.0f}h old)")
+                            else:
+                                print(f"    ❓ {home} vs {away} | {market} → no score found yet")
 
-                updated_matches.append(updated)
+                    updated_matches.append(updated)
 
-            # Only write back if something changed
-            if day_updated > 0 or day_errors > 0:
-                # Recalculate slip-level win/loss summary
-                resolved = [m for m in updated_matches if m.get('result', 'pending') != 'pending']
+                # Calculate summary
+                resolved = [m for m in updated_matches if not _is_pending(m)]
                 wins = sum(1 for m in resolved if m.get('result') == 'won')
                 losses = sum(1 for m in resolved if m.get('result') == 'lost')
+                still_pending = [m for m in updated_matches if _is_pending(m)]
 
-                ref.update({
-                    'matches': updated_matches,
-                    'results_summary': {
-                        'wins': wins,
-                        'losses': losses,
-                        'pending': len([m for m in updated_matches if m.get('result', 'pending') == 'pending']),
-                        'void': len([m for m in updated_matches if m.get('result') == 'void']),
-                        'slip_result': 'won' if losses == 0 and wins > 0 else ('lost' if losses > 0 else 'pending'),
-                    },
-                    'results_updated_at': __import__('datetime').datetime.utcnow().isoformat(),
-                })
-                print(f"  📅 {date_str}: resolved {day_updated} picks "
-                      f"({wins}W / {losses}L) | {day_errors} void")
-                total_updated += day_updated
-                total_errors += day_errors
-            else:
-                print(f"  ⏳ {date_str}: {len(pending)} picks still pending "
-                      f"(scores not available yet)")
+                if day_updated > 0 or day_errors > 0:
+                    update_data = {
+                        matches_key: updated_matches,
+                        'results_summary': {
+                            'wins': wins,
+                            'losses': losses,
+                            'pending': len(still_pending),
+                            'void': len([m for m in updated_matches if m.get('result') == 'void']),
+                            'slip_result': 'won' if losses == 0 and wins > 0 else ('lost' if losses > 0 else 'pending'),
+                        },
+                        'results_updated_at': datetime.utcnow().isoformat(),
+                    }
+                    ref.update(update_data)
+                    print(f"  📅 {collection_name}/{date_str}: resolved {day_updated} picks "
+                          f"({wins}W / {losses}L) | {day_errors} void")
+                    total_updated += day_updated
+                    total_errors += day_errors
+                else:
+                    print(f"  ⏳ {collection_name}/{date_str}: {len(still_pending)} picks still pending")
 
-        except Exception as e:
-            print(f"  ❌ ResultUpdater error for {date_str}: {e}")
+            except Exception as e:
+                print(f"  ❌ ResultUpdater error for {collection_name}/{date_str}: {e}")
+                import traceback
+                traceback.print_exc()
 
-    print(f"✅ ResultUpdater: done — {total_updated} picks resolved")
+    print(f"✅ ResultUpdater: done — {total_updated} picks resolved, {total_errors} void")
     return {'updated': total_updated, 'errors': total_errors}

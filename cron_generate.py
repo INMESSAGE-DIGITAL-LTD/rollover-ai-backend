@@ -1,6 +1,7 @@
 """
 Render Cron Job: Generate daily predictions and write to Firestore.
-Runs daily at 00:00 WAT (23:00 UTC) via Render's built-in cron scheduler.
+Runs daily at 00:05 UTC (01:05 WAT) via Render's built-in cron scheduler.
+Scheduled AFTER the API-Football quota resets at 00:00 UTC.
 
 No HTTP. No Flask. Pure worker script.
 Imports the shared generator service for all business logic.
@@ -10,59 +11,116 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from datetime import datetime
-from utils.fixture_fetcher import fetch_todays_fixtures
-from utils.sportmonks_stats import fetch_team_stats, fetch_h2h
-from utils.sportmonks_proxy import SportMonksProxy
+from datetime import datetime, timedelta
+from utils.fixture_fetcher import fetch_fixtures_by_date
+from utils.apifootball_stats import ApiFootballStats
+from utils.apifootball_proxy import ApiFootballProxy
 from models.multi_market_predictor import MultiMarketPredictor
 from utils.team_stats import TeamStatsCalculator
 from history import init_history_db, save_daily_picks
 from services.generator import generate_and_store
 
 
-class _SmStatsProxy:
-    def fetch_team_stats(self, team_id):
-        return fetch_team_stats(team_id)
-    def fetch_h2h(self, team1_id, team2_id):
-        return fetch_h2h(team1_id, team2_id)
-
-
 def main():
-    today_str = datetime.utcnow().strftime('%Y-%m-%d')
-    print(f"🕛 Cron worker started for {today_str}")
+    # Cron runs at 00:05 UTC (after quota reset at 00:00 UTC).
+    # At 00:05 UTC, utcnow() is already the correct WAT "today" date.
+    target_str = datetime.utcnow().strftime('%Y-%m-%d')
+    print(f"🕛 Cron worker started — generating picks for {target_str}")
 
     # Load models
     print("🔄 Loading models...")
     predictor = MultiMarketPredictor()
     predictor.load_models('models/trained')
     stats_calculator = TeamStatsCalculator('data/raw/all_matches.csv')
-    sm_stats = _SmStatsProxy()
-    sm_proxy = SportMonksProxy()
+    af_stats = ApiFootballStats()
+    af_proxy = ApiFootballProxy()
     print("✅ Models loaded")
 
-    # Fetch fixtures
-    fixtures = fetch_todays_fixtures()
+    # Fetch fixtures for the target date
+    fixtures = fetch_fixtures_by_date(target_str, no_league_filter=True)
 
     # Init SQLite for backup
     init_history_db()
 
     # Step 1: Update results for the last 3 days before generating new picks.
-    # This marks past picks as won/lost so the app can show history and the
-    # market tracker has accurate data to penalise underperforming markets.
     try:
         from utils.result_updater import update_past_results
-        update_past_results(sm_proxy, days_back=3)
+        update_past_results(af_proxy, days_back=4)
     except Exception as e:
         print(f"⚠️ Result updater failed (non-fatal): {e}")
 
     # Step 2: Run generator service (AI → market tracker → Firestore → cleanup)
     result = generate_and_store(
-        fixtures, predictor, stats_calculator, sm_stats,
-        sm_proxy=sm_proxy,
+        fixtures, predictor, stats_calculator, af_stats,
+        sm_proxy=af_proxy,
+        date_str=target_str,
     )
 
-    print(f"🎉 Cron complete: {result['message']}")
+    print(f"🎉 AI Pro generation complete: {result['message']}")
+
+    # Step 3: Generate Rollover picks — reuse same fixtures, no extra API calls
+    try:
+        from services.rollover_generator import generate_rollover_picks
+        from utils.market_tracker import get_market_penalties as _get_cron_mp
+        _cron_mp = {}
+        try:
+            _cron_mp = _get_cron_mp(af_proxy, lookback_days=7, min_picks=3)
+        except Exception:
+            pass
+        rollover_result = generate_rollover_picks(
+            fixtures, predictor, stats_calculator, af_stats,
+            sm_proxy=af_proxy,
+            date_str=target_str,
+            market_penalties=_cron_mp,
+        )
+        print(f"🛡️ Rollover generation complete: {rollover_result['message']}")
+    except Exception as e:
+        print(f"⚠️ Rollover generation failed (non-fatal): {e}")
+
+    # Step 4: Generate AI Pro tips
+    try:
+        from services.ai_pro_generator import generate_ai_pro_picks
+        ai_pro_result = generate_ai_pro_picks(
+            fixtures, predictor, stats_calculator, af_stats,
+            sm_proxy=af_proxy,
+            date_str=target_str,
+            market_penalties=_cron_mp,
+        )
+        print(f"🧠 AI Pro generation complete: {ai_pro_result['message']}")
+    except Exception as e:
+        print(f"⚠️ AI Pro generation failed (non-fatal): {e}")
+
+    # Step 5: Generate Big Odds picks — after all other tabs so exclusions are full
+    try:
+        from services.big_odds_generator import generate_big_odds_picks
+        from firebase_config import get_firestore_client
+        # Build exclusion set from all other tabs
+        _excluded = set()
+        _db = get_firestore_client()
+        for _col, _key in [('daily_ai_pro', 'tips'), ('daily_predictions', 'matches'), ('daily_rollover', 'matches')]:
+            try:
+                _doc = _db.collection(_col).document(target_str).get()
+                if _doc.exists:
+                    for _m in (_doc.to_dict() or {}).get(_key, []):
+                        _h, _a = _m.get('home_team', ''), _m.get('away_team', '')
+                        if _h and _a:
+                            _excluded.add(f"{_h}_{_a}")
+            except Exception:
+                pass
+        big_odds_result = generate_big_odds_picks(
+            fixtures, predictor, stats_calculator, af_stats,
+            sm_proxy=af_proxy,
+            date_str=target_str,
+            market_penalties=_cron_mp,
+            excluded_match_keys=_excluded,
+        )
+        print(f"🎯 Big Odds generation complete: {big_odds_result['message']}")
+    except Exception as e:
+        print(f"⚠️ Big Odds generation failed (non-fatal): {e}")
+
+    print(f"🎉 Cron complete for {target_str}")
 
 
 if __name__ == '__main__':
     main()
+
