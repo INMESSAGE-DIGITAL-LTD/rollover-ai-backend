@@ -185,6 +185,15 @@ def generate_big_odds_picks(
 
     clear_cache()
     excluded = excluded_match_keys or set()
+
+    # Drop reserve/youth/women fixtures — unreliable data, inflates odds artificially
+    _JUNK_KEYWORDS = ('II', ' B ', 'U18', 'U19', 'U20', 'U21', 'U23', 'Women', 'Reserves', 'Youth')
+    fixtures = [
+        f for f in fixtures
+        if not any(k in f.get('home_team', '') or k in f.get('away_team', '') or k in f.get('league_name', '')
+                   for k in _JUNK_KEYWORDS)
+    ]
+
     print(f"🎯 Big Odds Generator: Analyzing {len(fixtures)} fixtures for {target_date}...")
     if excluded:
         print(f"🎯 Big Odds Generator: Excluding {len(excluded)} fixtures already used in other tabs")
