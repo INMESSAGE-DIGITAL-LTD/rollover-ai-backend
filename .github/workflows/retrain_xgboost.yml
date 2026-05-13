@@ -80,10 +80,12 @@ jobs:
           assert (models_dir / 'xgb_under25.joblib').exists(), 'under25 model missing'
           assert (models_dir / 'xgb_btts.joblib').exists(), 'btts model missing'
 
-          model = joblib.load(models_dir / 'xgb_over25.joblib')
-          df = pd.read_csv('data/training_data.csv', nrows=5)
-          X = df[FEATURE_COLS].apply(pd.to_numeric, errors='coerce').fillna(0.0)
-          print('Models OK. Sample predict:', model.predict_proba(X.head(1)))
+          # Build a dummy feature row (all zeros) -- just verifies model loads and runs
+          dummy = pd.DataFrame([{c: 0.5 for c in FEATURE_COLS}])
+          for target in ['over25', 'under25', 'btts', 'home_win']:
+              model = joblib.load(models_dir / f'xgb_{target}.joblib')
+              prob = model.predict_proba(dummy)[0][1]
+              print(f'  {target}: prob={prob:.3f}')
           print('Smoke test passed.')
           "
 
