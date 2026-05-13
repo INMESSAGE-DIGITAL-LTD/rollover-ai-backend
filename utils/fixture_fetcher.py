@@ -618,6 +618,15 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             except Exception:
                 pass
 
+        # Blend XGBoost model probabilities for key markets (over25, under25, btts, home_win, etc.)
+        # Only when we have real bookmaker odds (not defaults)
+        if fix.get('odds_source') != 'default':
+            try:
+                from utils.xgb_predictor import blend_xgb_predictions
+                ai_pred = blend_xgb_predictions(ai_pred, fix)
+            except Exception:
+                pass
+
         base_info = {
             'home_team': home,
             'away_team': away,
