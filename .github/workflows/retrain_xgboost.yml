@@ -65,7 +65,15 @@ jobs:
       - name: Smoke test new models
         run: |
           python -c "
-          import joblib, pandas as pd, json, pathlib
+          import joblib, pandas as pd, pathlib
+
+          FEATURE_COLS = [
+              'implied_home', 'implied_draw', 'implied_away',
+              'implied_over25', 'implied_under25',
+              'league_over25_rate', 'league_over15_rate', 'league_btts_rate',
+              'league_avg_goals', 'league_home_win_rate',
+              'league_is_high_scoring', 'league_is_low_scoring',
+          ]
 
           models_dir = pathlib.Path('models')
           assert (models_dir / 'xgb_over25.joblib').exists(), 'over25 model missing'
@@ -74,7 +82,8 @@ jobs:
 
           model = joblib.load(models_dir / 'xgb_over25.joblib')
           df = pd.read_csv('data/training_data.csv', nrows=5)
-          print('Models OK. Sample predict:', model.predict_proba(df.head(1)))
+          X = df[FEATURE_COLS].apply(pd.to_numeric, errors='coerce').fillna(0.0)
+          print('Models OK. Sample predict:', model.predict_proba(X.head(1)))
           print('Smoke test passed.')
           "
 
