@@ -6,6 +6,7 @@ Strategy:
   - 2 picks at ~80% each = ~64% daily win rate
   - Only the safest, highest-probability markets are allowed:
       Over 1.5 Goals, Over 2.5 Goals, Double Chance (1X), Double Chance (X2)
+      + Under 2.5 Goals / Under 3.5 Goals ONLY for confirmed low-scoring leagues
   - No risky markets: no BTTS, no Away Win, no Draw, no half-time bets
   - Searches ALL leagues (no league filter)
   - Strict probability gates: minimum 80% AI probability
@@ -34,6 +35,8 @@ ROLLOVER_MIN_PROB = {
     'Over 2.5 Goals':     0.80,
     'Double Chance (1X)': 0.83,
     'Double Chance (X2)': 0.81,
+    'Under 2.5 Goals':    0.80,
+    'Under 3.5 Goals':    0.82,
 }
 
 # Minimum composite score per market
@@ -42,17 +45,18 @@ ROLLOVER_MIN_COMPOSITE = {
     'Over 2.5 Goals':     0.36,
     'Double Chance (1X)': 0.39,
     'Double Chance (X2)': 0.37,
+    'Under 2.5 Goals':    0.36,
+    'Under 3.5 Goals':    0.34,
 }
 
 # Minimum edge required for rollover picks (model_prob - implied_prob)
 ROLLOVER_MIN_EDGE = 0.04
 
 # Min/Max single-pick odds for Rollover
-# Max 1.60 per pick → combined max ≈ 2.55 with 2 picks
 ROLLOVER_MIN_SINGLE_ODDS = 1.20
 ROLLOVER_MAX_SINGLE_ODDS = 1.60
 
-# Hard cap on combined slip odds — keeps weekly total ≤ ~18 (2.56 × 7)
+# Hard cap on combined slip odds
 ROLLOVER_MAX_COMBINED_ODDS = 2.60
 
 # Exactly 2 picks — the 2 surest bets
@@ -60,6 +64,20 @@ ROLLOVER_MAX_PICKS = 2
 
 # Max 1 pick of the same market type in one slip (force diversity)
 ROLLOVER_MAX_SAME_MARKET = 1
+
+
+def _is_rollover_market_ok(opt):
+    """Allow standard markets plus Under markets for confirmed low-scoring leagues."""
+    market = opt.get('market', '')
+    if market in ROLLOVER_ALLOWED_MARKETS:
+        return True
+    if market in ('Under 2.5 Goals', 'Under 3.5 Goals'):
+        try:
+            from utils.league_dna import get_league_dna
+            return get_league_dna(opt.get('league_name', '')).is_low_scoring
+        except Exception:
+            return False
+    return False
 
 
 def generate_rollover_picks(
@@ -79,7 +97,7 @@ def generate_rollover_picks(
 
     Picks the 2 SUREST bets from fixtures NOT already used in Free or AI Pro.
     Uses strict market filtering, 80%+ probability thresholds, edge requirements,
-    and a hard combined-odds cap of 2.15 per day (target weekly ≤ 14).
+    and a hard combined-odds cap of 2.60 per day (target weekly ≤ 18).
 
     Args:
         fixtures:             List of fixture dicts from API-Football.
@@ -130,10 +148,10 @@ def generate_rollover_picks(
 
     print(f"🛡️ Rollover Generator: {len(all_options)} total options before safety filter")
 
-    # ── Safety filter: only the allowed markets with strict thresholds ────────
+    # ── Safety filter: allowed markets with strict thresholds ─────────────────
     safe_options = [
         o for o in all_options
-        if o['market'] in ROLLOVER_ALLOWED_MARKETS
+        if _is_rollover_market_ok(o)
         and o['ai_prob'] >= ROLLOVER_MIN_PROB.get(o['market'], 0.78)
         and o['composite_score'] >= ROLLOVER_MIN_COMPOSITE.get(o['market'], 0.50)
         and o.get('edge', 0) >= ROLLOVER_MIN_EDGE
@@ -188,7 +206,6 @@ def generate_rollover_picks(
         if len(slip_matches) >= max_picks:
             break
 
-        # Check if adding this pick would exceed combined odds cap
         potential_combined = combined_odds * opt['odds']
         if potential_combined > ROLLOVER_MAX_COMBINED_ODDS and len(slip_matches) >= 1:
             continue
@@ -214,7 +231,6 @@ def generate_rollover_picks(
         }
 
     # ── Enforce combined odds cap ─────────────────────────────────────────────
-    # Cap: remove highest-odds pick until combined ≤ max
     while len(slip_matches) > 1:
         combined_odds = 1.0
         for o in slip_matches:
@@ -224,7 +240,6 @@ def generate_rollover_picks(
         slip_matches.sort(key=lambda x: x['odds'], reverse=True)
         slip_matches.pop(0)
 
-    # Recalculate combined_odds after enforcement
     combined_odds = 1.0
     for o in slip_matches:
         combined_odds *= o['odds']
