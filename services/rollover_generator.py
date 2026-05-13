@@ -10,8 +10,8 @@ Strategy:
   - Searches ALL leagues (no league filter)
   - Strict probability gates: minimum 80% AI probability
   - Market penalties applied to avoid repeating losing patterns
-  - Single pick odds capped at 1.50 → combined max ~2.15 per day
-  - Weekly total target ≤ 14 odds (2.0/day × 7 days)
+  - Single pick odds capped at 1.60 → combined max ~2.60 per day
+  - Weekly total target ≤ 18 odds (2.6/day × 7 days)
   - NEVER duplicates a fixture already used in Free or AI Pro tabs
   - Stores results in Firestore daily_rollover/{date_str} (separate from AI Pro)
 """
@@ -38,22 +38,22 @@ ROLLOVER_MIN_PROB = {
 
 # Minimum composite score per market
 ROLLOVER_MIN_COMPOSITE = {
-    'Over 1.5 Goals':     0.55,
-    'Over 2.5 Goals':     0.53,
-    'Double Chance (1X)': 0.56,
-    'Double Chance (X2)': 0.54,
+    'Over 1.5 Goals':     0.38,
+    'Over 2.5 Goals':     0.36,
+    'Double Chance (1X)': 0.39,
+    'Double Chance (X2)': 0.37,
 }
 
 # Minimum edge required for rollover picks (model_prob - implied_prob)
-ROLLOVER_MIN_EDGE = 0.05
+ROLLOVER_MIN_EDGE = 0.04
 
 # Min/Max single-pick odds for Rollover
-# Max 1.50 per pick → combined max ≈ 2.15 with 2 picks
+# Max 1.60 per pick → combined max ≈ 2.55 with 2 picks
 ROLLOVER_MIN_SINGLE_ODDS = 1.20
-ROLLOVER_MAX_SINGLE_ODDS = 1.50
+ROLLOVER_MAX_SINGLE_ODDS = 1.60
 
-# Hard cap on combined slip odds — keeps weekly total ≤ ~14 (2.0 × 7)
-ROLLOVER_MAX_COMBINED_ODDS = 2.15
+# Hard cap on combined slip odds — keeps weekly total ≤ ~18 (2.56 × 7)
+ROLLOVER_MAX_COMBINED_ODDS = 2.60
 
 # Exactly 2 picks — the 2 surest bets
 ROLLOVER_MAX_PICKS = 2
