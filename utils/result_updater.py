@@ -1,6 +1,6 @@
 """Result Auto-Updater.
 
-Fetches actual FT scores from SportMonks for past predictions stored in
+Fetches actual FT scores from API-Football for past predictions stored in
 Firestore and marks each pick as 'won', 'lost', or 'void' (inconclusive).
 
 Called from cron_generate.py before each new generation run so that:
@@ -15,12 +15,6 @@ import json
 import os
 import urllib.request
 import urllib.error
-
-SPORTMONKS_TOKEN = os.environ.get(
-    'SPORTMONKS_TOKEN',
-    'b7EFSY6Bmrxisf6OswWjYArQUHMakSEDRMTJVoFiH56sbHsxaJxFRpVrOuoL',
-)
-SPORTMONKS_BASE = 'https://api.sportmonks.com/v3/football'
 
 
 def _extract_goal_line(market):
@@ -263,10 +257,7 @@ def _is_pending(m):
 def update_past_results(proxy, days_back=3):
     """
     Read the last `days_back` days of Firestore daily_predictions, fetch
-    actual scores from SportMonks, and update each match's `result` field.
-
-    Uses direct SportMonks API calls (not the proxy cache) to ensure
-    fresh score data is always available.
+    actual scores from API-Football, and update each match's `result` field.
     """
     try:
         from firebase_config import get_firestore_client
@@ -323,9 +314,11 @@ def update_past_results(proxy, days_back=3):
                 # Only pull next-day fixtures if that date is already in the past
                 if datetime.now(timezone.utc).strftime('%Y-%m-%d') >= next_date_str:
                     next_day = _fetch_fixtures_direct(next_date_str)
-                    if next_day:
-                        fixtures_result = fixtures_result + next_day
-                        print(f"  📡 Also checked {next_date_str}: +{len(next_day)} late-night fixtures")
+                    next_fixtures = next_day.get('fixtures', [])
+                    if next_fixtures:
+                        combined = fixtures_result.get('fixtures', []) + next_fixtures
+                        fixtures_result = {'fixtures': combined}
+                        print(f"  📡 Also checked {next_date_str}: +{len(next_fixtures)} late-night fixtures")
 
                 updated_matches = []
                 day_updated = 0
