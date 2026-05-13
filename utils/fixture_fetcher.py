@@ -175,15 +175,17 @@ def _fetch_fixtures_for_date(date_str, no_league_filter=False):
     # Step 2: fetch odds and build fixture_id → markets map
     odds_map = _fetch_odds_map(date_str)
 
-    # Step 3: identify fixtures without bookmaker odds — they need predictions to qualify.
-    no_odds_ids = []
+    # Step 3: collect ALL filtered fixture IDs for prediction fetching.
+    # API-Football /predictions is now the primary signal for EVERY fixture —
+    # top leagues included. XGBoost only runs when AF prediction is unavailable.
+    all_fixture_ids = []
     for item in raw_fixtures:
         league_id = (item.get('league') or {}).get('id', 0)
         if not no_league_filter and league_id not in LEAGUE_FILTER:
             continue
         fid = (item.get('fixture') or {}).get('id')
-        if fid and not odds_map.get(fid):
-            no_odds_ids.append(fid)
+        if fid:
+            all_fixture_ids.append(fid)
 
     predictions_map = {}
     injuries_map    = {}
@@ -192,14 +194,11 @@ def _fetch_fixtures_for_date(date_str, no_league_filter=False):
             fetch_predictions_for_fixtures,
             fetch_injuries_for_fixtures,
         )
-        # Only fetch predictions for fixtures that LACK bookmaker odds.
-        # Fixtures with bookmaker odds use XGBoost + real odds (no extra API call needed).
-        # Fixtures without odds NEED predictions to derive lines and qualify at all.
-        # Cap at 50 to avoid timing out the web request handler.
-        predictions_map = fetch_predictions_for_fixtures(no_odds_ids[:50])
+        # Fetch predictions for ALL fixtures — API-Football is the primary signal.
+        predictions_map = fetch_predictions_for_fixtures(all_fixture_ids[:80])
 
-        # Injuries: only for fixtures we fetched predictions for (already limited)
-        injuries_map = fetch_injuries_for_fixtures(list(predictions_map.keys())[:30])
+        # Fetch injuries for all fixtures we got predictions for.
+        injuries_map = fetch_injuries_for_fixtures(list(predictions_map.keys())[:50])
     except Exception as e:
         print(f"⚠️ Predictions/injuries fetch skipped: {e}")
 

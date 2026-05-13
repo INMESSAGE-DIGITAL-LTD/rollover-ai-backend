@@ -6,19 +6,11 @@ Fetches:
     attack/defence ratings, H2H probability, form comparison
   - /injuries: injured players per fixture (reduces goal/result probabilities)
 
-Used for:
-  1. Deriving market odds when bookmaker odds are unavailable (non-top leagues)
-  2. Blending with XGBoost model output — weighted by league tier:
-       Top leagues (bookmaker odds): 50% XGBoost / 50% API-Football
-       Non-top leagues (no odds):    25% XGBoost / 75% API-Football
-  3. Injury adjustments applied after blending
-
-Blend weight reasoning:
-  - XGBoost trained on ~24k matches, mostly top European leagues.
-    For non-top leagues it falls back to hardcoded default stats.
-  - API-Football predictions use their full global database (all leagues)
-    and include Poisson + attack/defence + H2H signals.
-  - Giving API-Football more weight for non-top leagues is the correct call.
+Architecture (updated):
+  - API-Football predictions are the PRIMARY signal for ALL fixtures.
+  - XGBoost only runs as a last-resort fallback when /predictions is unavailable.
+  - Blend weight for bookmaker fixtures raised to 90% AF / 10% XGBoost.
+  - Non-bookmaker fixtures use 100% AF predictions.
 """
 import math
 import time
@@ -33,18 +25,16 @@ _PREDICTIONS_CACHE = {}   # fixture_id → {data, ts}
 _INJURIES_CACHE    = {}   # fixture_id → {data, ts}
 _CACHE_TTL         = 6 * 3600   # 6 hours
 
-MAX_PREDICTIONS_CALLS = 50    # cap per run — only no-odds fixtures need predictions
-MAX_INJURIES_CALLS    = 30
+MAX_PREDICTIONS_CALLS = 80    # fetch for all filtered fixtures per day
+MAX_INJURIES_CALLS    = 50
 
 
 # ── Blend weights ─────────────────────────────────────────────────────────────
 
-# For top-league games that have real bookmaker odds:
-WEIGHT_API_BOOKMAKER = 0.50    # API-Football gets 50%, XGBoost gets 50%
-
-# For non-top leagues where we derive odds from predictions:
-# XGBoost uses hardcoded fallback stats for unknown teams → less trustworthy
-WEIGHT_API_PREDICTION = 0.75   # API-Football gets 75%, XGBoost gets 25%
+# API-Football is now the primary signal for ALL fixtures.
+# XGBoost only runs as fallback when /predictions is unavailable.
+WEIGHT_API_BOOKMAKER   = 0.90   # raised from 0.50 — AF dominates even with real odds
+WEIGHT_API_PREDICTION  = 1.00   # no-odds fixtures: 100% AF, no XGBoost blend
 
 
 # ── Predictions fetch ─────────────────────────────────────────────────────────
