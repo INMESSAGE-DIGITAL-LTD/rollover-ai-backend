@@ -12,7 +12,7 @@
     "home_win_rate": 0.451,
     "draw_rate": 0.23,
     "away_win_rate": 0.319,
-    "updated_at": "2026-05-13T15:33:32Z",
+    "updated_at": "2026-05-18T07:32:28Z",
     "profile": "high_scoring"
   },
   "Championship": {
@@ -28,7 +28,7 @@
     "home_win_rate": 0.438,
     "draw_rate": 0.262,
     "away_win_rate": 0.3,
-    "updated_at": "2026-05-13T15:33:36Z",
+    "updated_at": "2026-05-18T07:32:32Z",
     "profile": "low_scoring"
   },
   "League One": {
@@ -44,7 +44,7 @@
     "home_win_rate": 0.431,
     "draw_rate": 0.246,
     "away_win_rate": 0.324,
-    "updated_at": "2026-05-13T15:33:39Z",
+    "updated_at": "2026-05-18T07:32:36Z",
     "profile": "balanced"
   },
   "Bundesliga": {
@@ -60,7 +60,7 @@
     "home_win_rate": 0.432,
     "draw_rate": 0.254,
     "away_win_rate": 0.314,
-    "updated_at": "2026-05-13T15:33:42Z",
+    "updated_at": "2026-05-18T07:32:39Z",
     "profile": "high_scoring"
   },
   "2. Bundesliga": {
@@ -76,7 +76,7 @@
     "home_win_rate": 0.442,
     "draw_rate": 0.251,
     "away_win_rate": 0.307,
-    "updated_at": "2026-05-13T15:33:44Z",
+    "updated_at": "2026-05-18T07:32:42Z",
     "profile": "high_scoring"
   },
   "Serie A": {
@@ -92,7 +92,7 @@
     "home_win_rate": 0.413,
     "draw_rate": 0.281,
     "away_win_rate": 0.306,
-    "updated_at": "2026-05-13T15:33:47Z",
+    "updated_at": "2026-05-18T07:32:46Z",
     "profile": "low_scoring"
   },
   "Serie B": {
@@ -108,7 +108,7 @@
     "home_win_rate": 0.391,
     "draw_rate": 0.327,
     "away_win_rate": 0.282,
-    "updated_at": "2026-05-13T15:33:50Z",
+    "updated_at": "2026-05-18T07:32:49Z",
     "profile": "low_scoring"
   },
   "La Liga": {
@@ -124,7 +124,7 @@
     "home_win_rate": 0.454,
     "draw_rate": 0.257,
     "away_win_rate": 0.289,
-    "updated_at": "2026-05-13T15:33:53Z",
+    "updated_at": "2026-05-18T07:32:52Z",
     "profile": "low_scoring"
   },
   "La Liga 2": {
@@ -140,7 +140,7 @@
     "home_win_rate": 0.457,
     "draw_rate": 0.305,
     "away_win_rate": 0.238,
-    "updated_at": "2026-05-13T15:33:56Z",
+    "updated_at": "2026-05-18T07:32:56Z",
     "profile": "low_scoring"
   },
   "Ligue 1": {
@@ -156,7 +156,7 @@
     "home_win_rate": 0.429,
     "draw_rate": 0.237,
     "away_win_rate": 0.334,
-    "updated_at": "2026-05-13T15:33:59Z",
+    "updated_at": "2026-05-18T07:32:59Z",
     "profile": "balanced"
   },
   "Ligue 2": {
@@ -172,7 +172,7 @@
     "home_win_rate": 0.44,
     "draw_rate": 0.267,
     "away_win_rate": 0.293,
-    "updated_at": "2026-05-13T15:34:02Z",
+    "updated_at": "2026-05-18T07:33:02Z",
     "profile": "low_scoring"
   },
   "Eredivisie": {
@@ -188,7 +188,7 @@
     "home_win_rate": 0.444,
     "draw_rate": 0.246,
     "away_win_rate": 0.309,
-    "updated_at": "2026-05-13T15:34:05Z",
+    "updated_at": "2026-05-18T07:33:05Z",
     "profile": "high_scoring"
   },
   "Pro League": {
@@ -204,7 +204,7 @@
     "home_win_rate": 0.442,
     "draw_rate": 0.257,
     "away_win_rate": 0.301,
-    "updated_at": "2026-05-13T15:34:07Z",
+    "updated_at": "2026-05-18T07:33:08Z",
     "profile": "balanced"
   },
   "Primeira Liga": {
@@ -220,7 +220,7 @@
     "home_win_rate": 0.452,
     "draw_rate": 0.228,
     "away_win_rate": 0.32,
-    "updated_at": "2026-05-13T15:34:10Z",
+    "updated_at": "2026-05-18T07:33:11Z",
     "profile": "balanced"
   },
   "Scottish Premiership": {
@@ -236,7 +236,7 @@
     "home_win_rate": 0.474,
     "draw_rate": 0.218,
     "away_win_rate": 0.308,
-    "updated_at": "2026-05-13T15:34:13Z",
+    "updated_at": "2026-05-18T07:33:14Z",
     "profile": "high_scoring"
   },
   "Super Lig": {
@@ -252,7 +252,7 @@
     "home_win_rate": 0.463,
     "draw_rate": 0.238,
     "away_win_rate": 0.299,
-    "updated_at": "2026-05-13T15:34:15Z",
+    "updated_at": "2026-05-18T07:33:17Z",
     "profile": "balanced"
   },
   "Super League": {
@@ -268,7 +268,7 @@
     "home_win_rate": 0.418,
     "draw_rate": 0.261,
     "away_win_rate": 0.321,
-    "updated_at": "2026-05-13T15:34:18Z",
+    "updated_at": "2026-05-18T07:33:20Z",
     "profile": "balanced"
   }
 }
