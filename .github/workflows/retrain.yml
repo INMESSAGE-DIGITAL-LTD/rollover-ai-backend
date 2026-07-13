@@ -1,5 +1,8 @@
 name: Bi-Weekly Model Retraining
 
+permissions:
+  contents: write
+
 # Runs every 14 days (1st and 15th of each month) at 02:00 UTC.
 # Also manually triggerable from the GitHub Actions tab.
 on:
