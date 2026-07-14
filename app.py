@@ -50,7 +50,12 @@ def home():
 
 @app.route('/health')
 def health():
-    return jsonify({"status": "healthy", "models": len(predictor.models)})
+    return jsonify({
+        "status": "healthy",
+        "models": len(predictor.models),
+        # Render injects RENDER_GIT_COMMIT — lets us verify which commit is live
+        "commit": os.environ.get('RENDER_GIT_COMMIT', 'unknown')[:7],
+    })
 
 @app.route('/api/predict', methods=['POST'])
 def predict():
