@@ -39,6 +39,17 @@ FALLBACK_WINDOWS = [(2.00, 2.20), (1.95, 2.30), (1.85, 2.45)]
 
 MAX_CANDIDATES = 20   # top-probability legs considered for combination search
 
+# Reserve/youth/women teams have unreliable data and inflated model
+# confidence — never ship them, even on thin off-season days.
+JUNK_KEYWORDS = ('II', ' B ', 'U18', 'U19', 'U20', 'U21', 'U23',
+                 'Women', 'Reserves', 'Youth')
+
+
+def _is_junk(opt):
+    fields = (opt.get('home_team', ''), opt.get('away_team', ''),
+              opt.get('league_name', ''))
+    return any(k in f for k in JUNK_KEYWORDS for f in fields)
+
 
 def filter_safe_options(match_options, *, market_penalties=None,
                         exclude_match_markets=None, allowed_markets=None,
@@ -56,6 +67,8 @@ def filter_safe_options(match_options, *, market_penalties=None,
         market = opt.get('market', '')
         rule = markets.get(market)
         if rule is None:
+            continue
+        if _is_junk(opt):
             continue
         min_odds, max_odds, min_prob = rule
 
@@ -138,22 +151,22 @@ def select_safe_slip(candidates, *, min_combined=2.00, max_combined=2.20,
                 combined *= float(leg.get('odds', 1.0))
             return list(best), round(combined, 2)
 
-    # Nothing lands in any window: take the pair closest to the target
-    # midpoint so the product stays near 2x even on thin days.
-    target = (min_combined + max_combined) / 2
-    if len(candidates) >= 2:
-        best_pair, best_dist = None, None
-        for a, b in combinations(candidates[:10], 2):
-            combined = float(a.get('odds', 1.0)) * float(b.get('odds', 1.0))
-            dist = abs(combined - target)
-            if best_dist is None or dist < best_dist:
-                best_pair, best_dist = [a, b], dist
-        combined = 1.0
-        for leg in best_pair:
-            combined *= float(leg.get('odds', 1.0))
-        return best_pair, round(combined, 2)
-
-    return list(candidates[:1]), round(float(candidates[0].get('odds', 1.0)), 2)
+    # Nothing lands in any window (thin off-season days: only tiny-odds legs
+    # available). Greedily stack the highest-probability legs toward the 2x
+    # floor — six 1.11 legs ≈ 1.87 beats a 1.23 pair, and every extra leg is
+    # still a ≥78% pick.
+    THIN_DAY_MAX_LEGS = 6
+    legs = []
+    combined = 1.0
+    for opt in candidates:
+        if len(legs) >= THIN_DAY_MAX_LEGS or combined >= min_combined:
+            break
+        nxt = combined * float(opt.get('odds', 1.0))
+        if nxt > max_combined:
+            continue
+        legs.append(opt)
+        combined = nxt
+    return legs, round(combined, 2)
 
 
 def build_safe_slip(match_options, *, min_combined=2.00, max_combined=2.20,
