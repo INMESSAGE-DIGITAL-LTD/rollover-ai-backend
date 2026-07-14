@@ -112,10 +112,22 @@ jobs:
             git push
           fi
 
-      - name: Trigger Render deploy
+      # Bot pushes don't trigger deploy.yml (GitHub suppresses
+      # workflow-to-workflow triggers), so deploy directly here.
+      - name: Trigger Render deploys
         env:
-          RENDER_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
-        if: ${{ env.RENDER_HOOK != '' }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
         run: |
-          curl -s -X POST "$RENDER_HOOK"
-          echo "Render deploy triggered."
+          if [ -z "$RENDER_API_KEY" ]; then
+            echo "RENDER_API_KEY not set -- skipping deploy"
+            exit 0
+          fi
+          for SID in srv-d69or6ruibrs739l1l00 \
+                     crn-d6u1d8cr85hc73acfh50 \
+                     crn-d6g3ck9drdic738tb450; do
+            echo "Deploying $SID ..."
+            curl -sf -X POST "https://api.render.com/v1/services/$SID/deploys" \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{}' > /dev/null || echo "  deploy trigger failed for $SID"
+          done

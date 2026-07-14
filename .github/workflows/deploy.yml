@@ -1,0 +1,45 @@
+# Deploy to Render on every push to main.
+#
+# Render's own GitHub webhook integration has been silently broken since
+# 2026-05-18 (pushes produced no builds; services ran 2-month-old code).
+# Rather than depend on it, GitHub triggers the deploys itself via the
+# Render API.
+#
+# Note: pushes made by github-actions[bot] (e.g. model retrains) do NOT
+# trigger this workflow — GitHub suppresses workflow-to-workflow triggers.
+# That's why retrain.yml and retrain_xgboost.yml each end with the same
+# Render API call.
+#
+# Required GitHub Secret: RENDER_API_KEY
+
+name: Deploy to Render
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: render-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploys (web + cron services)
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+        run: |
+          set -e
+          # web: rollover-ai-backend | crons: daily-predictions, update-results
+          for SID in srv-d69or6ruibrs739l1l00 \
+                     crn-d6u1d8cr85hc73acfh50 \
+                     crn-d6g3ck9drdic738tb450; do
+            echo "Deploying $SID ..."
+            curl -sf -X POST "https://api.render.com/v1/services/$SID/deploys" \
+              -H "Authorization: Bearer $RENDER_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{}' > /dev/null
+            echo "  triggered."
+          done
