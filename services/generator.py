@@ -42,8 +42,12 @@ def generate_and_store(
         dict with keys: status, date, match_count, combined_odds, message
     """
     from utils.apifootball_stats import clear_cache
-    from utils.fixture_fetcher import build_parlay_slip
+    from utils.fixture_fetcher import (
+        build_parlay_slip, generate_match_options, format_slip_matches,
+        _format_all_predictions, _slip_confidence,
+    )
     from utils.market_tracker import get_market_penalties
+    from services.safe_slip_engine import build_safe_slip
 
     today_str = date_str if date_str else datetime.utcnow().strftime('%Y-%m-%d')
 
@@ -76,58 +80,47 @@ def generate_and_store(
         except Exception as e:
             print(f"⚠️ Generator: Market tracker failed (non-fatal): {e}")
 
-    # Run AI — first pass (strict: max single odds 1.60)
-    print(f"🧠 Generator: Running AI on {len(fixtures)} fixtures (max={num_matches})...")
+    # Safe Slip Engine: probability-first, safe markets only
+    # (Over 1.5 / Double Chance), real bookmaker odds, combined 2.00-2.20.
+    print(f"🧠 Generator: Running Safe Slip Engine on {len(fixtures)} fixtures...")
     clear_cache()
-    result = build_parlay_slip(
+    options = generate_match_options(
         fixtures, predictor, stats_calculator,
-        num_matches=num_matches,
-        min_odds=min_odds,
-        max_odds=max_odds,
         af_stats=None,   # Disable live team stats API calls (saves ~1000 calls/run)
         free_mode=False, # CSV stats + AF predictions are sufficient for qualification
-        market_penalties=market_penalties,
     )
+    legs, combined = build_safe_slip(options, market_penalties=market_penalties)
 
-    slip = result.get('slip', {})
-    matches = slip.get('matches', [])
+    result = {
+        'date': today_str,
+        'total_fixtures_analyzed': len(fixtures),
+        'all_predictions': _format_all_predictions(options),
+    }
 
-    # Second pass: if fewer than 5 picks, relax max_odds to 1.80 to include
-    # Under 1.5 / Under 2.5 markets (safety rules allow up to 1.70-1.80 for these).
-    # All second-pass picks still must pass the quality gate (edge threshold).
-    MIN_PICKS = 5
-    if len(matches) < MIN_PICKS:
-        print(f"⚠️ Generator: Only {len(matches)} picks in first pass — running second pass with max_odds=1.80")
-        already_used = {
-            f"{m.get('home_team','')}_{m.get('away_team','')}_{m.get('market','')}"
-            for m in matches
+    if legs:
+        slip = {
+            'matches': format_slip_matches(legs),
+            'match_count': len(legs),
+            'combined_odds': combined,
+            'slip_confidence': _slip_confidence(legs),
         }
-        result2 = build_parlay_slip(
+        matches = slip['matches']
+    else:
+        # Fallback: no safe legs qualified today — fall back to the legacy
+        # value-based slip so the app never shows an empty day.
+        print("⚠️ Generator: Safe engine found nothing — legacy parlay fallback")
+        legacy = build_parlay_slip(
             fixtures, predictor, stats_calculator,
-            num_matches=num_matches,
+            num_matches=3,
             min_odds=min_odds,
-            max_odds=1.80,  # relaxed ceiling unlocks Under markets
-            sm_stats=sm_stats,
+            max_odds=1.50,
+            af_stats=None,
             free_mode=False,
             market_penalties=market_penalties,
         )
-        extra = [
-            m for m in result2.get('slip', {}).get('matches', [])
-            if f"{m.get('home_team','')}_{m.get('away_team','')}_{m.get('market','')}"
-            not in already_used
-        ]
-        matches = matches + extra
-        # Recalculate combined odds for the full list
-        combined_total = 1.0
-        for m in matches:
-            combined_total *= float(m.get('odds', 1.0))
-        slip = {
-            'matches': matches,
-            'match_count': len(matches),
-            'combined_odds': round(combined_total, 2),
-            'slip_confidence': slip.get('slip_confidence', 'NONE'),
-        }
-        print(f"✅ Generator: Second pass added {len(extra)} picks → {len(matches)} total")
+        result['all_predictions'] = legacy.get('all_predictions', result['all_predictions'])
+        slip = legacy.get('slip', {})
+        matches = slip.get('matches', [])
 
     if not matches:
         # Write placeholder so on-demand throttle can prevent repeated quota drain

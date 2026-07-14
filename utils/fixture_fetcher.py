@@ -639,6 +639,7 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             'home_short_code': fix.get('home_short_code', ''),
             'away_short_code': fix.get('away_short_code', ''),
             'all_predictions': {k: round(float(v), 3) for k, v in ai_pred.items()},
+            'odds_source': fix.get('odds_source', 'bookmaker'),
             'home_form': _build_form_summary(home_live, 'home') if home_live else None,
             'away_form': _build_form_summary(away_live, 'away') if away_live else None,
             'h2h': h2h_data,

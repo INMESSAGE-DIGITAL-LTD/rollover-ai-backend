@@ -18,118 +18,57 @@ from firebase_config import get_firestore_client
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 
 
-# All mainstream markets allowed — includes 1st/2nd half, team goals, BTTS
+# Safe markets only — Big Odds now stacks MORE safe legs instead of fewer
+# risky ones. Old 6x-15x slips built from 1X2/Draw legs had a <10% hit rate
+# by construction; 4-6 safe legs at 3.5-6.5x can actually land.
 BIG_ODDS_ALLOWED_MARKETS = {
-    # Full-time result
-    'Home Win',
-    'Away Win',
-    'Draw',
-    # Double Chance
+    'Over 1.5 Goals',
     'Double Chance (1X)',
     'Double Chance (X2)',
     'Double Chance (12)',
-    # BTTS
-    'Both Teams to Score',
-    'BTTS No',
-    # Full-time Over/Under goals
-    'Over 0.5 Goals',
-    'Over 1.5 Goals',
-    'Over 2.5 Goals',
-    'Over 3.5 Goals',
-    'Over 4.5 Goals',
-    'Under 2.5 Goals',
-    'Under 3.5 Goals',
-    # Team goals (Home/Away)
     'Home Over 0.5 Goals',
-    'Home Over 1.5 Goals',
-    'Home Over 2.5 Goals',
     'Away Over 0.5 Goals',
-    'Away Over 1.5 Goals',
-    'Away Over 2.5 Goals',
     'Home to Score',
     'Away to Score',
-    # 1st Half / 2nd Half goals
-    '1st Half Over 0.5',
-    '2nd Half Over 0.5',
-    '1st Half Under 0.5',
-    '2nd Half Under 0.5',
 }
 
 # Minimum AI probability per market — relaxed but still meaningful gates
 BIG_ODDS_MIN_PROB = {
-    'Home Win':                0.55,
-    'Away Win':                0.50,
-    'Draw':                    0.48,
-    'Double Chance (1X)':      0.65,
-    'Double Chance (X2)':      0.62,
-    'Double Chance (12)':      0.62,
-    'Both Teams to Score':     0.58,
-    'BTTS No':                 0.52,
-    'Over 0.5 Goals':          0.75,
-    'Over 1.5 Goals':          0.65,
-    'Over 2.5 Goals':          0.58,
-    'Over 3.5 Goals':          0.50,
-    'Over 4.5 Goals':          0.45,
-    'Under 2.5 Goals':         0.55,
-    'Under 3.5 Goals':         0.60,
-    'Home Over 0.5 Goals':     0.68,
-    'Home Over 1.5 Goals':     0.60,
-    'Home Over 2.5 Goals':     0.50,
-    'Away Over 0.5 Goals':     0.65,
-    'Away Over 1.5 Goals':     0.55,
-    'Away Over 2.5 Goals':     0.48,
-    'Home to Score':           0.68,
-    'Away to Score':           0.62,
-    '1st Half Over 0.5':       0.62,
-    '2nd Half Over 0.5':       0.62,
-    '1st Half Under 0.5':      0.55,
-    '2nd Half Under 0.5':      0.55,
+    'Over 1.5 Goals':          0.72,
+    'Double Chance (1X)':      0.72,
+    'Double Chance (X2)':      0.72,
+    'Double Chance (12)':      0.74,
+    'Home Over 0.5 Goals':     0.76,
+    'Away Over 0.5 Goals':     0.74,
+    'Home to Score':           0.76,
+    'Away to Score':           0.74,
 }
 
 # Minimum composite score per market
 BIG_ODDS_MIN_COMPOSITE = {
-    'Home Win':                0.35,
-    'Away Win':                0.32,
-    'Draw':                    0.30,
+    'Over 1.5 Goals':          0.42,
     'Double Chance (1X)':      0.42,
     'Double Chance (X2)':      0.40,
     'Double Chance (12)':      0.40,
-    'Both Teams to Score':     0.36,
-    'BTTS No':                 0.33,
-    'Over 0.5 Goals':          0.48,
-    'Over 1.5 Goals':          0.42,
-    'Over 2.5 Goals':          0.38,
-    'Over 3.5 Goals':          0.33,
-    'Over 4.5 Goals':          0.28,
-    'Under 2.5 Goals':         0.36,
-    'Under 3.5 Goals':         0.40,
     'Home Over 0.5 Goals':     0.42,
-    'Home Over 1.5 Goals':     0.38,
-    'Home Over 2.5 Goals':     0.32,
     'Away Over 0.5 Goals':     0.40,
-    'Away Over 1.5 Goals':     0.35,
-    'Away Over 2.5 Goals':     0.30,
     'Home to Score':           0.42,
     'Away to Score':           0.38,
-    '1st Half Over 0.5':       0.38,
-    '2nd Half Over 0.5':       0.38,
-    '1st Half Under 0.5':      0.35,
-    '2nd Half Under 0.5':      0.35,
 }
 
 # Minimum edge over bookmaker implied probability
 BIG_ODDS_MIN_EDGE = 0.02
 
-# Single-pick odds range: 1.50 minimum, 5.00 maximum
-BIG_ODDS_MIN_SINGLE_ODDS = 1.50
-BIG_ODDS_MAX_SINGLE_ODDS = 5.00
+# Single-pick odds range: safe legs price at 1.15-1.60
+BIG_ODDS_MIN_SINGLE_ODDS = 1.15
+BIG_ODDS_MAX_SINGLE_ODDS = 1.60
 
-# Combined slip odds range
-BIG_ODDS_MIN_COMBINED = 4.0
-BIG_ODDS_MAX_COMBINED = 8.0
+# Combined slip odds range — reachable with 4-6 safe legs
+BIG_ODDS_MIN_COMBINED = 3.5
+BIG_ODDS_MAX_COMBINED = 6.5
 
 # Pick count range
-BIG_ODDS_MIN_PICKS = 2
+BIG_ODDS_MIN_PICKS = 3
 BIG_ODDS_MAX_PICKS = 6
 
 # Max 2 picks of the same market type per slip (more flexible than rollover)
@@ -209,7 +148,8 @@ def generate_big_odds_picks(
     safe_options = [
         o for o in all_options
         if o['market'] in BIG_ODDS_ALLOWED_MARKETS
-        and o['ai_prob'] >= BIG_ODDS_MIN_PROB.get(o['market'], 0.50)
+        and o.get('odds_source') == 'bookmaker'
+        and o['ai_prob'] >= BIG_ODDS_MIN_PROB.get(o['market'], 0.72)
         and o['composite_score'] >= BIG_ODDS_MIN_COMPOSITE.get(o['market'], 0.32)
         and o.get('edge', 0) >= BIG_ODDS_MIN_EDGE
         and o['odds'] >= BIG_ODDS_MIN_SINGLE_ODDS
@@ -248,9 +188,10 @@ def generate_big_odds_picks(
             'message': 'No qualifying picks met Big Odds quality standards today.',
         }
 
-    # Sort by value score: composite_score × log(odds) — rewards confidence AND good odds
+    # Sort probability-first: the slip's hit rate is the product of leg
+    # probabilities, so the strongest legs go in first. Stability breaks ties.
     safe_options.sort(
-        key=lambda x: x.get('composite_score', 0) * math.log(max(x['odds'], 1.01)),
+        key=lambda x: (x.get('ai_prob', 0), x.get('stability', 0)),
         reverse=True,
     )
 

@@ -675,9 +675,9 @@ def free_picks_by_date(date_str):
         else:
             print("⚠️ AI Pro picks not cached yet — free picks may overlap (will fix on next call)")
 
-        # ── Step 2: Build free slip — odds 1.10-1.30, combined 1.60-2.00 ──
+        # ── Step 2: Safe Slip Engine — safe markets only, combined 2.00-2.20 ──
         print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
-              f"odds 1.10-1.30, max 6 matches, combined 1.60-2.00")
+              f"safe markets, combined 2.00-2.20")
         clear_cache()
 
         # Apply market performance penalties
@@ -688,48 +688,34 @@ def free_picks_by_date(date_str):
         except Exception:
             pass
 
-        result = build_parlay_slip(
+        from services.safe_slip_engine import build_safe_slip
+        from utils.fixture_fetcher import (
+            generate_match_options, format_slip_matches,
+            _format_all_predictions, _slip_confidence,
+        )
+
+        options = generate_match_options(
             fixtures, predictor, stats_calculator,
-            num_matches=6,
-            min_odds=1.10,
-            max_odds=2.00,
             af_stats=None,  # disabled: saves ~1000 API calls/run
             free_mode=False,  # Use strict safety rules
-            exclude_match_markets=exclude_match_markets,
-            market_penalties=_free_mp,
         )
-        result['date'] = date_str
+        legs, combined = build_safe_slip(
+            options,
+            market_penalties=_free_mp,
+            exclude_match_markets=exclude_match_markets,
+        )
 
-        # ── Step 3: Enforce combined odds 1.60-2.00 ──
-        MIN_FREE_COMBINED = 1.60
-        MAX_FREE_COMBINED = 2.00
-
-        def calc_combined(lst):
-            odds = 1.0
-            for m in lst:
-                odds *= float(m.get('odds', 1.0))
-            return odds
-
-        free_matches = result.get('slip', {}).get('matches', [])
-        all_matches = result.get('all_predictions', [])
-
-        # Cap: remove highest-odds pick until combined ≤ max
-        while len(free_matches) > 1 and calc_combined(free_matches) > MAX_FREE_COMBINED:
-            free_matches.sort(key=lambda x: float(x.get('odds', 1.0)), reverse=True)
-            free_matches.pop(0)
-
-        # Floor: if combined < min, try adding from remaining pool
-        if calc_combined(free_matches) < MIN_FREE_COMBINED:
-            used_keys = {f"{m.get('home_team')}_{m.get('away_team')}" for m in free_matches}
-            extras = [m for m in all_matches if f"{m.get('home_team')}_{m.get('away_team')}" not in used_keys]
-            for extra in extras:
-                test = free_matches + [extra]
-                combined = calc_combined(test)
-                if combined <= MAX_FREE_COMBINED:
-                    free_matches = test
-                    used_keys.add(f"{extra.get('home_team')}_{extra.get('away_team')}")
-                    if combined >= MIN_FREE_COMBINED:
-                        break
+        result = {
+            'date': date_str,
+            'total_fixtures_analyzed': len(fixtures),
+            'slip': {
+                'matches': format_slip_matches(legs),
+                'match_count': len(legs),
+                'combined_odds': combined,
+                'slip_confidence': _slip_confidence(legs),
+            },
+            'all_predictions': _format_all_predictions(options),
+        }
 
         af_proxy.set_cache(cache_key, result)
         return jsonify(result)

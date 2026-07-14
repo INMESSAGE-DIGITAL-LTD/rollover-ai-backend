@@ -50,10 +50,10 @@ jobs:
             echo "FIREBASE_SERVICE_ACCOUNT secret not set — skipping."
           fi
 
-      - name: Collect recent match results from SportMonks
+      - name: Collect recent match results from API-Football
         continue-on-error: true
         env:
-          SPORTMONKS_TOKEN: ${{ secrets.SPORTMONKS_API_KEY }}
+          APIFOOTBALL_KEY: ${{ secrets.APIFOOTBALL_KEY }}
         run: |
           DAYS="${{ github.event.inputs.days || '30' }}"
           echo "Collecting last $DAYS days of results..."

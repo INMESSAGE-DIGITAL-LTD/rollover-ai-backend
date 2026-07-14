@@ -100,16 +100,29 @@ AI_PRO_MIN_COMPOSITE = {
 # Minimum edge required (model_prob - implied_prob)
 AI_PRO_MIN_EDGE = 0.05
 
-# Odds limits per pick — raised floor to exclude low-value DC picks
-AI_PRO_MIN_ODDS = 1.40
-AI_PRO_MAX_ODDS = 2.50
+# Safe-market whitelist: Gold users must win consistently, so AI Pro only
+# ships the statistically safest markets (win-probability-first strategy).
+AI_PRO_ALLOWED_MARKETS = {
+    'Over 1.5 Goals',
+    'Double Chance (1X)',
+    'Double Chance (X2)',
+    'Double Chance (12)',
+    'Home Over 0.5 Goals',
+    'Away Over 0.5 Goals',
+    'Home to Score',
+    'Away to Score',
+}
+
+# Odds limits per pick — lowered floor so safe DC legs (1.15-1.40) qualify
+AI_PRO_MIN_ODDS = 1.12
+AI_PRO_MAX_ODDS = 1.60
 
 # Max picks per day — dynamic 1-3 based on what qualifies
 AI_PRO_MAX_PICKS = 3
 
-# Combined odds range
+# Combined odds range — the daily 2-odds window users can actually land
 AI_PRO_MIN_COMBINED_ODDS = 2.00
-AI_PRO_MAX_COMBINED_ODDS = 5.00
+AI_PRO_MAX_COMBINED_ODDS = 2.20
 
 # Max 1 pick of the same market type (force full diversity)
 AI_PRO_MAX_SAME_MARKET = 1
@@ -231,10 +244,12 @@ def generate_ai_pro_picks(
 
     print(f"🧠 AI Pro Generator: {len(all_options)} total options before filtering")
 
-    # ── Filter: all markets, strict quality thresholds ────────────────────────
+    # ── Filter: safe markets only, real bookmaker odds, strict thresholds ────
     qualified = [
         o for o in all_options
-        if o['ai_prob'] >= AI_PRO_MIN_PROB.get(o['market'], 0.65)
+        if o['market'] in AI_PRO_ALLOWED_MARKETS
+        and o.get('odds_source') == 'bookmaker'
+        and o['ai_prob'] >= AI_PRO_MIN_PROB.get(o['market'], 0.65)
         and o['composite_score'] >= AI_PRO_MIN_COMPOSITE.get(o['market'], 0.46)
         and o.get('edge', 0) >= AI_PRO_MIN_EDGE
         and o['odds'] >= AI_PRO_MIN_ODDS
