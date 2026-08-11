@@ -81,7 +81,7 @@ def generate_and_store(
             print(f"⚠️ Generator: Market tracker failed (non-fatal): {e}")
 
     # Safe Slip Engine: probability-first, safe markets only
-    # (Over 1.5 / Double Chance), real bookmaker odds, combined 2.00-2.20.
+    # (Over 1.5 / Double Chance), real bookmaker odds, combined 2.00-4.00.
     print(f"🧠 Generator: Running Safe Slip Engine on {len(fixtures)} fixtures...")
     clear_cache()
     options = generate_match_options(

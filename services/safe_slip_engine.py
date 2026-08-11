@@ -3,21 +3,26 @@ Safe Slip Engine — probability-first daily slip builder.
 
 Philosophy: users must WIN daily. Every other generator in this repo ranks
 picks by edge/value (beat the bookmaker long-term); this engine ranks by
-raw win probability and restricts legs to the four statistically safest
-markets. Value is secondary — a slip that lands at 2.05 beats a "+EV" slip
-that loses.
+raw win probability and restricts legs to a small set of statistically
+safest markets. Value is secondary — a slip that lands at 2.05 beats a
+"+EV" slip that loses.
 
 Markets allowed (labels match result_updater grading + Flutter rendering):
   - Over 1.5 Goals
   - Double Chance (1X)   (home or draw)
   - Double Chance (X2)   (draw or away)
   - Double Chance (12)   (home or away)
+  - Home Over 0.5 Goals  (favourite scores at least once)
+  - Away Over 0.5 Goals  (away side scores at least once)
+Spread across markets on purpose — leaning on one market (e.g. only
+Over 1.5) means one bad market day sinks every slip that day.
 
 Slip construction:
   - Only real bookmaker odds (odds_source == 'bookmaker'), never derived
-    or default odds — the combined 2.00-2.20 target is meaningless with
+    or default odds — the combined 2.00-4.00 target is meaningless with
     fabricated leg prices.
-  - One leg per fixture, 2-3 legs, combined odds in [2.00, 2.20].
+  - One leg per fixture, 2-3 legs, each leg 1.20-1.50, combined odds in
+    [2.00, 4.00].
   - Score = product of leg probabilities (the slip's actual win chance),
     with a small bonus for mixing markets so free users can't infer the
     hidden pick from the visible teams alone.
@@ -28,14 +33,16 @@ from itertools import combinations
 
 # market label → (min leg odds, max leg odds, min blended probability)
 SAFE_MARKETS = {
-    'Over 1.5 Goals':     (1.15, 1.50, 0.78),
-    'Double Chance (1X)': (1.10, 1.50, 0.78),
-    'Double Chance (X2)': (1.10, 1.50, 0.78),
-    'Double Chance (12)': (1.08, 1.45, 0.80),
+    'Over 1.5 Goals':       (1.20, 1.50, 0.78),
+    'Double Chance (1X)':   (1.20, 1.50, 0.78),
+    'Double Chance (X2)':   (1.20, 1.50, 0.78),
+    'Double Chance (12)':   (1.20, 1.50, 0.80),
+    'Home Over 0.5 Goals':  (1.20, 1.50, 0.78),
+    'Away Over 0.5 Goals':  (1.20, 1.50, 0.80),
 }
 
 # Widening ladder used when the strict window can't be filled.
-FALLBACK_WINDOWS = [(2.00, 2.20), (1.95, 2.30), (1.85, 2.45)]
+FALLBACK_WINDOWS = [(2.00, 4.00), (1.95, 4.10), (1.85, 4.25)]
 
 MAX_CANDIDATES = 20   # top-probability legs considered for combination search
 
@@ -120,7 +127,7 @@ def _slip_score(combo):
     return prob
 
 
-def select_safe_slip(candidates, *, min_combined=2.00, max_combined=2.20,
+def select_safe_slip(candidates, *, min_combined=2.00, max_combined=4.00,
                      max_legs=3):
     """Pick the highest-win-probability combo whose combined odds land in
     the target window. Returns (legs, combined_odds); ([], 0) if empty pool.
@@ -169,7 +176,7 @@ def select_safe_slip(candidates, *, min_combined=2.00, max_combined=2.20,
     return legs, round(combined, 2)
 
 
-def build_safe_slip(match_options, *, min_combined=2.00, max_combined=2.20,
+def build_safe_slip(match_options, *, min_combined=2.00, max_combined=4.00,
                     max_legs=3, market_penalties=None,
                     exclude_match_markets=None):
     """match_options (from generate_match_options) → (legs, combined_odds)."""

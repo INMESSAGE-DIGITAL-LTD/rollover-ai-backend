@@ -6,7 +6,7 @@ Strategy:
   - All markets supported: FT result, Double Chance, BTTS, Over/Under, team goals,
     1st/2nd half — any market passing quality gates qualifies
   - Dynamic pick count: 1-3 tips based on what qualifies (quality over quantity)
-  - Odds limits: 1.40–2.50 per pick, combined 2.00–5.00
+  - Odds limits: 1.15–1.50 per pick, combined 2.00–4.00
   - Real odds from API-Football (not hardcoded estimates)
   - Market penalties applied to avoid repeating losing patterns
   - Stores results in Firestore daily_ai_pro/{date_str}
@@ -113,16 +113,16 @@ AI_PRO_ALLOWED_MARKETS = {
     'Away to Score',
 }
 
-# Odds limits per pick — lowered floor so safe DC legs (1.15-1.40) qualify
-AI_PRO_MIN_ODDS = 1.12
-AI_PRO_MAX_ODDS = 1.60
+# Odds limits per pick
+AI_PRO_MIN_ODDS = 1.15
+AI_PRO_MAX_ODDS = 1.50
 
 # Max picks per day — dynamic 1-3 based on what qualifies
 AI_PRO_MAX_PICKS = 3
 
-# Combined odds range — the daily 2-odds window users can actually land
+# Combined odds range — daily window users can actually land
 AI_PRO_MIN_COMBINED_ODDS = 2.00
-AI_PRO_MAX_COMBINED_ODDS = 2.20
+AI_PRO_MAX_COMBINED_ODDS = 4.00
 
 # Max 1 pick of the same market type (force full diversity)
 AI_PRO_MAX_SAME_MARKET = 1
@@ -327,7 +327,7 @@ def generate_ai_pro_picks(
             'message': 'Could not build AI Pro slip from available picks.',
         }
 
-    # ── Enforce combined odds 1.80–2.50 ──────────────────────────────────────
+    # ── Enforce combined odds 2.00–4.00 ──────────────────────────────────────
     # Cap: remove highest-odds pick until combined ≤ max
     while len(selected) > 1:
         combined_odds = 1.0

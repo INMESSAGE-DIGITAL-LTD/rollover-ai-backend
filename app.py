@@ -680,9 +680,9 @@ def free_picks_by_date(date_str):
         else:
             print("⚠️ AI Pro picks not cached yet — free picks may overlap (will fix on next call)")
 
-        # ── Step 2: Safe Slip Engine — safe markets only, combined 2.00-2.20 ──
+        # ── Step 2: Safe Slip Engine — safe markets only, combined 2.00-4.00 ──
         print(f"🎯 Free picks for {date_str}: {len(fixtures)} fixtures, "
-              f"safe markets, combined 2.00-2.20")
+              f"safe markets, combined 2.00-4.00")
         clear_cache()
 
         # Apply market performance penalties
