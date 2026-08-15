@@ -164,13 +164,37 @@ def generate_and_store(
 
     print(f"✅ Generator: {len(matches)} matches, combined odds {slip['combined_odds']}")
 
+    # ── Backfill for display so the Flutter app's Free tab is never empty ────
+    # The app slices this same `matches` array client-side: [0,3) for AI Pro,
+    # [3,7) for Free. On thin days the safe-slip engine only qualifies enough
+    # legs to hit its target combined odds (often just 2-3), leaving the Free
+    # slice empty even though more decent picks exist. Pad a display copy
+    # with extra individually-qualifying picks from the broader candidate
+    # pool already computed above (same pool /api/free-picks serves as
+    # all_predictions) — no extra API-Football calls. `match_count` and
+    # `combined_odds` below intentionally stay tied to the actual slip legs
+    # (used in push notification text), not this padded display list.
+    display_matches = list(matches)
+    if len(display_matches) < 7:
+        used_keys = {f"{m.get('home_team')}_{m.get('away_team')}" for m in display_matches}
+        for extra in result.get('all_predictions', []):
+            if len(display_matches) >= 7:
+                break
+            key = f"{extra.get('home_team')}_{extra.get('away_team')}"
+            if key in used_keys:
+                continue
+            display_matches.append(extra)
+            used_keys.add(key)
+        if len(display_matches) > len(matches):
+            print(f"🧩 Generator: Padded display matches {len(matches)} → {len(display_matches)}")
+
     # Write to Firestore
     db = get_firestore_client()
 
     doc_data = {
         'date': today_str,
         'total_fixtures_analyzed': result.get('total_fixtures_analyzed', len(fixtures)),
-        'matches': matches,
+        'matches': display_matches,
         'combined_odds': slip.get('combined_odds', 0),
         'slip_confidence': slip.get('slip_confidence', 'NONE'),
         'match_count': len(matches),
