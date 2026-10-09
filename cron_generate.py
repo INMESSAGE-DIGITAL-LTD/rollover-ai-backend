@@ -58,6 +58,15 @@ def main():
 
     print(f"🎉 AI Pro generation complete: {result['message']}")
 
+    # Step 2b: Value Bets — model probability vs real bookmaker price.
+    # Reuses the same fixtures, no extra API calls.
+    try:
+        from services.value_bets_generator import generate_value_bets
+        vb = generate_value_bets(fixtures, predictor, stats_calculator, date_str=target_str)
+        print(f"💎 Value Bets complete: {vb['message']}")
+    except Exception as e:
+        print(f"⚠️ Value Bets generation failed (non-fatal): {e}")
+
     # Step 3: Generate Rollover picks — reuse same fixtures, no extra API calls
     try:
         from services.rollover_generator import generate_rollover_picks

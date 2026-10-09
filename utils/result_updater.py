@@ -272,7 +272,7 @@ def update_past_results(proxy, days_back=3):
     print(f"🔄 ResultUpdater: Checking last {days_back} days of picks…")
 
     # Process both daily_predictions and daily_ai_pro collections
-    collections_to_check = ['daily_predictions', 'daily_ai_pro', 'daily_rollover', 'daily_big_odds']
+    collections_to_check = ['daily_predictions', 'daily_ai_pro', 'daily_rollover', 'daily_big_odds', 'daily_value_bets']
 
     for collection_name in collections_to_check:
         for i in range(1, days_back + 1):

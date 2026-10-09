@@ -517,11 +517,15 @@ def _normalize_dc_label(label):
     return ''
 
 
-def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None, af_stats=None, free_mode=False):
+def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None, af_stats=None, free_mode=False, value_collector=None):
     """
     Generate all match options from all markets for a list of fixtures.
     Integrates API-Football live stats + standings + statistical qualification + edge calculation.
     af_stats takes priority over sm_stats for backward compatibility.
+
+    value_collector: optional list. When given, every market with a real
+    bookmaker price is appended with its raw model probability *before* the
+    odds-safety / qualifier gates (used by the Value Bets generator).
     """
     from utils.stat_qualifier import passes_odds_safety, qualify_and_score, confidence_label
     from utils.apifootball_stats import get_team_standing
@@ -646,27 +650,47 @@ def _generate_match_options(fixtures, predictor, stats_calculator, sm_stats=None
             'standings': standings_ctx,
         }
 
+        def _model_prob(market_label, ai_market_key):
+            """Raw model probability with the league-DNA tendency applied."""
+            p = float(ai_pred.get(ai_market_key, 0.5))
+            lab = market_label.lower()
+            if league_tendency:
+                if 'over' in lab and 'goal' in lab:
+                    p *= league_tendency.get('over_boost', 1.0)
+                    p *= league_tendency.get('over_dampen', 1.0)
+                if 'under' in lab and 'goal' in lab:
+                    p *= league_tendency.get('under_boost', 1.0)
+                    p *= league_tendency.get('under_dampen', 1.0)
+                if lab in ('home win', 'away win', 'draw'):
+                    p *= league_tendency.get('result_dampen', 1.0)
+                if lab == 'home win':
+                    p *= league_tendency.get('home_boost', 1.0)
+                p = min(0.97, p)
+            return p
+
         def _try_add(market_label, odds, ai_market_key, line=None, source='api'):
+            if (value_collector is not None and odds
+                    and fix.get('odds_source') == 'bookmaker'
+                    and ai_market_key in ai_pred):
+                p = _model_prob(market_label, ai_market_key)
+                vopt = dict(base_info)
+                vopt.update({
+                    'fixture_id': fix.get('fixture_id'),
+                    'line': line,
+                    'market': market_label,
+                    'odds': float(odds),
+                    'ai_prob': p,
+                    'edge': p - 1.0 / float(odds),
+                    'source': 'value',
+                })
+                value_collector.append(vopt)
+
             if not passes_odds_safety(market_label, odds, free_mode=free_mode):
                 return
             actual_key = ai_market_key
             if actual_key not in ai_pred:
                 return
-            raw_ai_prob = float(ai_pred.get(actual_key, 0.5))
-
-            lab = market_label.lower()
-            if league_tendency:
-                if 'over' in lab and 'goal' in lab:
-                    raw_ai_prob *= league_tendency.get('over_boost', 1.0)
-                    raw_ai_prob *= league_tendency.get('over_dampen', 1.0)
-                if 'under' in lab and 'goal' in lab:
-                    raw_ai_prob *= league_tendency.get('under_boost', 1.0)
-                    raw_ai_prob *= league_tendency.get('under_dampen', 1.0)
-                if lab in ('home win', 'away win', 'draw'):
-                    raw_ai_prob *= league_tendency.get('result_dampen', 1.0)
-                if lab == 'home win':
-                    raw_ai_prob *= league_tendency.get('home_boost', 1.0)
-                raw_ai_prob = min(0.97, raw_ai_prob)
+            raw_ai_prob = _model_prob(market_label, actual_key)
 
             qual = qualify_and_score(
                 market_label, odds, raw_ai_prob,
@@ -1048,7 +1072,8 @@ def _format_slip_matches(matches):
             'home_team': m['home_team'],
             'away_team': m['away_team'],
             'match': f"{m['home_team']} vs {m['away_team']}",
-            'league': _league_name(m['league']),
+            # Prefer the name API-Football sent; _league_name() falls back to "League <id>".
+            'league': m.get('league_name') or _league_name(m['league']),
             'league_logo': m.get('league_logo', ''),
             'home_logo': m.get('home_logo', ''),
             'away_logo': m.get('away_logo', ''),
