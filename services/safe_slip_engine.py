@@ -53,9 +53,12 @@ JUNK_KEYWORDS = ('II', ' B ', 'U18', 'U19', 'U20', 'U21', 'U23',
 
 
 def _is_junk(opt):
+    from utils.league_quality import is_junk
     fields = (opt.get('home_team', ''), opt.get('away_team', ''),
               opt.get('league_name', ''))
-    return any(k in f for k in JUNK_KEYWORDS for f in fields)
+    # Old keyword list plus the stricter suffix rules (" W", "Res.", "U21",
+    # friendlies) that let women's/reserve sides through before.
+    return is_junk(opt) or any(k in f for k in JUNK_KEYWORDS for f in fields)
 
 
 def filter_safe_options(match_options, *, market_penalties=None,
@@ -108,9 +111,12 @@ def filter_safe_options(match_options, *, market_penalties=None,
                 float(best.get('ai_prob', 0)), best.get('stability', 0)):
             by_fixture[key] = opt
 
+    # Whitelisted (deep-data) leagues first; others only fill the gaps.
+    from utils.league_quality import is_whitelisted
     candidates = sorted(
         by_fixture.values(),
-        key=lambda o: (float(o.get('ai_prob', 0)), o.get('stability', 0)),
+        key=lambda o: (is_whitelisted(o), float(o.get('ai_prob', 0)),
+                       o.get('stability', 0)),
         reverse=True,
     )
     return candidates[:MAX_CANDIDATES]

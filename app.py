@@ -431,6 +431,83 @@ def rollover_picks_by_date(date_str):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/core-picks/<date_str>')
+def core_picks_by_date(date_str):
+    """
+    Banker of the Day + Safe Double for a date (Firestore only).
+
+    GET /api/core-picks/2026-10-10
+    """
+    from datetime import datetime as dt
+    try:
+        dt.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'Invalid date format. Use YYYY-MM-DD'}), 400
+    try:
+        doc = get_firestore_client().collection('daily_core').document(date_str).get()
+        matches = (doc.to_dict() or {}).get('matches', []) if doc.exists else []
+        banker = [m for m in matches if m.get('product') == 'banker']
+        double = [m for m in matches if m.get('product') == 'double']
+        combined = 1.0
+        for m in double:
+            combined *= float(m.get('odds', 1))
+        return jsonify({
+            'date': date_str,
+            'banker': banker[0] if banker else None,
+            'double': double,
+            'double_odds': round(combined, 2) if double else None,
+            'source': 'firestore',
+        })
+    except Exception as e:
+        print(f"❌ core-picks error: {e}")
+        return jsonify({'date': date_str, 'banker': None, 'double': [], 'error': str(e)}), 500
+
+
+def _product_result(legs):
+    """won / lost / pending for a set of legs (all must win)."""
+    results = [m.get('result') for m in legs]
+    if not legs:
+        return None
+    if any(r == 'lost' for r in results):
+        return 'lost'
+    if all(r == 'won' for r in results):
+        return 'won'
+    return 'pending'
+
+
+@app.route('/api/core-record')
+def core_record():
+    """
+    Day-by-day record of Banker and Safe Double (default last 30 days).
+
+    GET /api/core-record?days=30
+    """
+    from datetime import datetime as dt, timedelta
+    days = max(1, min(int(request.args.get('days', 30)), 90))
+    try:
+        db = get_firestore_client()
+        start = (dt.utcnow() - timedelta(days=days)).strftime('%Y-%m-%d')
+        out = []
+        for doc in db.collection('daily_core').where('date', '>=', start).stream():
+            d = doc.to_dict() or {}
+            ms = d.get('matches', [])
+            out.append({
+                'date': d.get('date', doc.id),
+                'banker': _product_result([m for m in ms if m.get('product') == 'banker']),
+                'double': _product_result([m for m in ms if m.get('product') == 'double']),
+            })
+        out.sort(key=lambda x: x['date'], reverse=True)
+
+        def tally(key):
+            settled = [x[key] for x in out if x[key] in ('won', 'lost')]
+            return {'won': settled.count('won'), 'lost': settled.count('lost')}
+
+        return jsonify({'days': out, 'banker': tally('banker'), 'double': tally('double')})
+    except Exception as e:
+        print(f"❌ core-record error: {e}")
+        return jsonify({'days': [], 'error': str(e)}), 500
+
+
 @app.route('/api/value-bets/<date_str>')
 def value_bets_by_date(date_str):
     """

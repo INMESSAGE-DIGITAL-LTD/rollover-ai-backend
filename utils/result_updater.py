@@ -158,26 +158,28 @@ APIFOOTBALL_BASE = 'https://v3.football.api-sports.io'
 
 
 def _fetch_fixtures_direct(date_str):
-    """Fetch finished fixtures with scores from API-Football (all pages).
-    On per-page errors, logs a warning and continues so partial results
-    are never lost because of a single transient failure."""
+    """Fetch finished fixtures with scores from API-Football for one UTC date.
+    Raises on any fetch/API error so the caller skips the date instead of
+    voiding picks."""
     fixtures = []
     page = 1
     while True:
-        url = f"{APIFOOTBALL_BASE}/fixtures?date={date_str}&timezone=UTC&page={page}"
+        # API-Football v3 /fixtures has no `page` param: sending one returns
+        # HTTP 200 with errors and an empty response, which silently voided
+        # every pick (2026-10). One request returns the whole day.
+        url = f"{APIFOOTBALL_BASE}/fixtures?date={date_str}&timezone=UTC"
         try:
             req = urllib.request.Request(url, headers={'x-apisports-key': APIFOOTBALL_KEY})
             with urllib.request.urlopen(req, timeout=20) as resp:
                 body = json.loads(resp.read().decode())
         except Exception as e:
-            print(f"  ⚠️ API-Football error fetching scores for {date_str} p{page}: {e}")
-            # Don't break — if we already have page 1 data, keep it.
-            # Only break if this was the very first page (nothing collected yet).
-            if page == 1:
-                break
-            # For later pages, stop paging but keep whatever we already collected.
-            print(f"  ⚠️ Keeping {len(fixtures)} fixtures collected before error")
-            break
+            # A failed fetch must not look like "no scores" (that voids picks).
+            raise RuntimeError(f"API-Football fetch failed for {date_str}: {e}")
+
+        if body.get('errors'):
+            # Never let an API error look like "no finished games" -> void.
+            # Raising skips this date in update_past_results, writing nothing.
+            raise RuntimeError(f"API-Football errors for {date_str}: {body['errors']}")
 
         for event in body.get('response', []):
             status = (event.get('fixture') or {}).get('status', {})
@@ -212,15 +214,9 @@ def _fetch_fixtures_direct(date_str):
                 'match_status': 'FT',
             })
 
-        # Check if there are more pages
-        paging = body.get('paging', {})
-        current = paging.get('current', 1)
-        total_pages = paging.get('total', 1)
-        if current >= total_pages:
-            break
-        page += 1
+        break
 
-    print(f"  📡 API-Football: {len(fixtures)} finished fixtures for {date_str} ({page} page(s))")
+    print(f"  📡 API-Football: {len(fixtures)} finished fixtures for {date_str}")
     return {'fixtures': fixtures}
 
 
@@ -272,7 +268,7 @@ def update_past_results(proxy, days_back=3):
     print(f"🔄 ResultUpdater: Checking last {days_back} days of picks…")
 
     # Process both daily_predictions and daily_ai_pro collections
-    collections_to_check = ['daily_predictions', 'daily_ai_pro', 'daily_rollover', 'daily_big_odds', 'daily_value_bets']
+    collections_to_check = ['daily_predictions', 'daily_ai_pro', 'daily_rollover', 'daily_big_odds', 'daily_value_bets', 'daily_core']
 
     for collection_name in collections_to_check:
         for i in range(1, days_back + 1):

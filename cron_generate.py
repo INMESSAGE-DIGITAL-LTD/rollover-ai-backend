@@ -58,6 +58,14 @@ def main():
 
     print(f"🎉 AI Pro generation complete: {result['message']}")
 
+    # Step 2a: Core picks — Banker of the Day + Safe Double (market-consensus).
+    try:
+        from services.core_picks_generator import generate_core_picks
+        core = generate_core_picks(fixtures, predictor, stats_calculator, date_str=target_str)
+        print(f"🏦 Core picks complete: {core['message']}")
+    except Exception as e:
+        print(f"⚠️ Core picks generation failed (non-fatal): {e}")
+
     # Step 2b: Value Bets — model probability vs real bookmaker price.
     # Reuses the same fixtures, no extra API calls.
     try:
